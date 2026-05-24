@@ -1,0 +1,13 @@
+model_name: Qwen/Qwen2.5-Math-1.5B
+dataset_path: data/iso_math_challenge.jsonl
+output_path: outputs/eval/baseline_qwen25_math_1_5b_challenge_quick.jsonl
+max_examples: 40
+max_new_tokens: 256
+temperature: 0.0
+top_p: 1.0
+device: auto
+prompt_template: |
+  Solve the problem. Show your reasoning briefly, then put the final answer after "Answer:".
+
+  Problem:
+  {problem}

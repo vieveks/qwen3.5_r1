@@ -21,6 +21,29 @@ Core comparisons:
 - Isomorphic family reward
 - Optional Dr. GRPO-style objective later
 
+## Current Status
+
+Phase 1 is complete enough to move into small controlled RL runs.
+
+The first easy dataset was too easy for a meaningful RL comparison. A later challenge profile was too hard and too slow. The current recommended dataset is the calibrated procedural profile:
+
+```text
+dataset: data/iso_math_calibrated.jsonl
+profile: calibrated
+seed: 29
+baseline config: configs/baseline_eval_calibrated.yaml
+baseline accuracy: 0.5625
+baseline family_accuracy: 0.25
+format_failure_rate: 0.0
+```
+
+That result is useful because single-question accuracy is moderate while whole-family accuracy is much lower. This is the exact gap Iso-RLVR is meant to attack.
+
+Progress log:
+
+- `phase1.md`: full Phase 1 run log, dataset calibration, field scan, and conclusions
+- `PLAN.md`: experiment roadmap
+
 ## Quick Start
 
 Create a Python environment, then install:
@@ -29,25 +52,54 @@ Create a Python environment, then install:
 pip install -e .
 ```
 
-Generate a small synthetic dataset:
+Generate the currently recommended calibrated dataset:
 
 ```bash
-python -m iso_rlvr.data.build_dataset --out data/iso_math_small.jsonl --families 200 --variants 4 --seed 7
+python -m iso_rlvr.data.build_dataset --out data/iso_math_calibrated.jsonl --families 200 --variants 4 --seed 29 --profile calibrated
 ```
 
-Run baseline evaluation:
+Run the calibrated baseline evaluation:
 
 ```bash
-python -m iso_rlvr.eval.run_eval --config configs/baseline_eval.yaml
+python -m iso_rlvr.eval.run_eval --config configs/baseline_eval_calibrated.yaml
 ```
 
-Run the minimal local trainer:
+Read the summary:
+
+```bash
+python -c "import json; print(json.dumps(json.load(open('outputs/eval/baseline_qwen25_math_1_5b_calibrated.summary.json')), indent=2))"
+```
+
+Run the minimal local trainer only after the baseline has been inspected:
 
 ```bash
 python -m iso_rlvr.train.grpo_lite --config configs/train_iso_grpo.yaml
 ```
 
+## Dataset Profiles
+
+The dataset builder supports multiple profiles for calibration:
+
+| Profile | Purpose | Current Use |
+| --- | --- | --- |
+| `easy` | Original simple arithmetic/algebra families | Sanity checks only |
+| `mixed` | Easy plus harder algebra families | General debugging |
+| `harder` | Algebraic hard families only | Too easy in Phase 1 baseline |
+| `challenge` | Multi-step stress families | Too hard for first RL, useful later |
+| `calibrated` | Weighted mid-difficulty profile | Recommended first RL dataset |
+
+Examples:
+
+```bash
+python -m iso_rlvr.data.build_dataset --out data/iso_math_small.jsonl --families 200 --variants 4 --seed 7 --profile easy
+python -m iso_rlvr.data.build_dataset --out data/iso_math_harder.jsonl --families 200 --variants 4 --seed 11 --profile harder
+python -m iso_rlvr.data.build_dataset --out data/iso_math_challenge.jsonl --families 200 --variants 4 --seed 19 --profile challenge
+python -m iso_rlvr.data.build_dataset --out data/iso_math_calibrated.jsonl --families 200 --variants 4 --seed 29 --profile calibrated
+```
+
 ## Next Steps
+
+Current progress and conclusions are tracked in `phase1.md`.
 
 ### 1. Set Up The Environment
 
@@ -73,16 +125,16 @@ python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_
 
 ### 2. Generate The First Dataset
 
-Start with a small dataset so failures are cheap.
+Use the calibrated dataset for the first meaningful experiment:
 
 ```bash
-python -m iso_rlvr.data.build_dataset --out data/iso_math_small.jsonl --families 200 --variants 4 --seed 7
+python -m iso_rlvr.data.build_dataset --out data/iso_math_calibrated.jsonl --families 200 --variants 4 --seed 29 --profile calibrated
 ```
 
 Check a few rows:
 
 ```bash
-python -c "import itertools; print(''.join(itertools.islice(open('data/iso_math_small.jsonl'), 3)))"
+python -c "import itertools; print(''.join(itertools.islice(open('data/iso_math_calibrated.jsonl'), 3)))"
 ```
 
 ### 3. Run Baseline Evaluation
@@ -90,20 +142,20 @@ python -c "import itertools; print(''.join(itertools.islice(open('data/iso_math_
 Run the base model before training anything.
 
 ```bash
-python -m iso_rlvr.eval.run_eval --config configs/baseline_eval.yaml
+python -m iso_rlvr.eval.run_eval --config configs/baseline_eval_calibrated.yaml
 ```
 
 This writes:
 
 ```text
-outputs/eval/baseline_qwen25_math_1_5b.jsonl
-outputs/eval/baseline_qwen25_math_1_5b.summary.json
+outputs/eval/baseline_qwen25_math_1_5b_calibrated.jsonl
+outputs/eval/baseline_qwen25_math_1_5b_calibrated.summary.json
 ```
 
 Read the summary:
 
 ```bash
-python -c "import json; print(json.dumps(json.load(open('outputs/eval/baseline_qwen25_math_1_5b.summary.json')), indent=2))"
+python -c "import json; print(json.dumps(json.load(open('outputs/eval/baseline_qwen25_math_1_5b_calibrated.summary.json')), indent=2))"
 ```
 
 ### 4. Decide Whether The Dataset Is Too Easy
@@ -122,6 +174,14 @@ family_accuracy: meaningfully lower than accuracy
 ```
 
 That gap is where Iso-RLVR has room to help.
+
+The current calibrated baseline is in range:
+
+```text
+accuracy: 0.5625
+family_accuracy: 0.25
+gap: 0.3125
+```
 
 ### 5. Run A Tiny Iso-RLVR Training Smoke Test
 
@@ -147,7 +207,7 @@ outputs/runs/iso_grpo_lite/
 
 ### 6. First Real Experiment Matrix
 
-Once the smoke test works, run matched small experiments:
+Use the calibrated dataset and run matched small experiments:
 
 ```text
 Base model evaluation
@@ -155,6 +215,8 @@ Independent correctness reward
 Iso family reward, lambda_iso = 0.25
 Iso family reward, lambda_iso = 0.50
 Iso family reward, lambda_iso = 1.00
+Held-out calibrated eval with a different seed
+Challenge profile eval as stress test only
 ```
 
 Keep the dataset, model, prompt template, max tokens, and training steps fixed across runs.
