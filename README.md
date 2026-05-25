@@ -61,8 +61,17 @@ First held-out controlled pair:
 | Base | 0.6000 | 0.2500 |
 | Independent 20-step | 0.6125 | 0.2500 |
 | Iso 20-step, lambda 0.50 | 0.6250 | 0.3000 |
+| Independent 20-step, seed 23 | 0.6375 | 0.3000 |
+| Iso 20-step, lambda 0.50, seed 23 | 0.6375 | 0.3500 |
 
-This is an early positive signal for Iso-RLVR, not a final result. See `phase2.md` for run logs, caveats, and next decisions.
+This is an early replicated positive signal for Iso-RLVR, not a final result. See `phase2.md` for run logs, caveats, and next decisions.
+
+Replication configs with explicit `seed: 23`:
+
+```text
+configs/train_independent_calibrated_20step_seed_23.yaml
+configs/train_iso_calibrated_lam_0_50_20step_seed_23.yaml
+```
 
 ## Quick Start
 

@@ -104,6 +104,24 @@ Status: 20-step Iso run with `lambda_iso = 0.50` completed and evaluated on held
 
 The `lambda_iso = 0.25` and `lambda_iso = 1.00` configs exist, but the next recommended step is replication or explicit seed control before running the full sweep.
 
+Replication status: seed control has been added to the trainer. Next run is the seed 23 matched pair:
+
+```text
+configs/train_independent_calibrated_20step_seed_23.yaml
+configs/train_iso_calibrated_lam_0_50_20step_seed_23.yaml
+```
+
+Status: seed 23 replicate completed. Independent reached held-out accuracy `0.6375` and family accuracy `0.30`. Iso `lambda_iso = 0.50` reached held-out accuracy `0.6375` and family accuracy `0.35`.
+
+Next lambda sweep candidates:
+
+```text
+configs/train_iso_calibrated_lam_0_25_20step.yaml
+configs/train_iso_calibrated_lam_1_00_20step.yaml
+```
+
+Run one at a time and evaluate before launching the next.
+
 Initial Iso-RLVR runs:
 
 ```text

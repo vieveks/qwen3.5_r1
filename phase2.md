@@ -452,3 +452,171 @@ This is not enough evidence for a strong claim, but it is the first positive sig
 Decision:
 
 Do not run the full lambda sweep blindly yet. The next best step is to replicate the matched pair with a second training seed or add explicit training/eval seed controls, then run `lambda_iso = 0.25` and `1.00` only if the replicated `0.50` result remains directionally positive.
+
+## Replication Plan: Seed 23
+
+Date: 2026-05-25
+
+The trainer now accepts an explicit `seed` field. The seed controls:
+
+- Python random sampling for training families
+- Torch generation sampling
+- CUDA RNG state when CUDA is available
+
+The seed is also written into every `train_log.jsonl` metrics record.
+
+Second-seed matched pair:
+
+```text
+configs/train_independent_calibrated_20step_seed_23.yaml
+configs/train_iso_calibrated_lam_0_50_20step_seed_23.yaml
+```
+
+Held-out eval configs:
+
+```text
+configs/eval_independent_calibrated_20step_seed_23.yaml
+configs/eval_iso_calibrated_lam_0_50_20step_seed_23.yaml
+```
+
+Protocol:
+
+1. Run tests after seed-control change.
+2. Train independent seed 23.
+3. Evaluate independent seed 23 adapter on the same held-out calibrated split.
+4. Train Iso `lambda_iso = 0.50` seed 23.
+5. Evaluate Iso seed 23 adapter on the same held-out calibrated split.
+6. Compare against the first controlled pair.
+
+Success criterion for continuing to the lambda sweep:
+
+Iso should again improve strict family accuracy relative to the matched independent run, without losing single-instance accuracy by more than a small amount.
+
+### Seed 23 Independent Run
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.train.grpo_lite --config configs/train_independent_calibrated_20step_seed_23.yaml
+```
+
+Runtime:
+
+```text
+about 1h43m
+```
+
+Output:
+
+```text
+outputs/runs/independent_calibrated_20step_seed_23/
+outputs/runs/independent_calibrated_20step_seed_23/adapter_or_model/adapter_model.safetensors
+outputs/runs/independent_calibrated_20step_seed_23/train_log.jsonl
+```
+
+Training-log aggregate:
+
+```json
+{
+  "steps": 20,
+  "accuracy": {"first": 0.0, "last": 0.625, "mean": 0.36875, "min": 0.0, "max": 0.875},
+  "family_accuracy": {"first": 0.0, "last": 0.5, "mean": 0.1, "min": 0.0, "max": 0.5},
+  "mean_reward": {"first": 0.0, "last": 0.625, "mean": 0.36875, "min": 0.0, "max": 0.875},
+  "loss": {"first": 0.0, "last": 0.081861212849617, "mean": -0.027759448532015084, "min": -0.1388397216796875, "max": 0.081861212849617},
+  "avg_tokens": {"first": 219.5, "last": 216.25, "mean": 212.89375, "min": 182.5, "max": 253.625},
+  "avg_wrong_tokens": {"first": 219.5, "last": 256.0, "mean": 230.4213095238095, "min": 190.0, "max": 256.0},
+  "format_failure_rate": {"first": 0.0, "last": 0.0, "mean": 0.0, "min": 0.0, "max": 0.0}
+}
+```
+
+Held-out adapter eval:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.run_eval --config configs/eval_independent_calibrated_20step_seed_23.yaml
+```
+
+```json
+{
+  "accuracy": 0.6375,
+  "avg_tokens": 206.4,
+  "avg_wrong_tokens": 249.3448275862069,
+  "family_accuracy": 0.3,
+  "format_failure_rate": 0.0
+}
+```
+
+### Seed 23 Iso Run, Lambda 0.50
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.train.grpo_lite --config configs/train_iso_calibrated_lam_0_50_20step_seed_23.yaml
+```
+
+Runtime:
+
+```text
+about 35m17s
+```
+
+Output:
+
+```text
+outputs/runs/iso_calibrated_lam_0_50_20step_seed_23/
+outputs/runs/iso_calibrated_lam_0_50_20step_seed_23/adapter_or_model/adapter_model.safetensors
+outputs/runs/iso_calibrated_lam_0_50_20step_seed_23/train_log.jsonl
+```
+
+Training-log aggregate:
+
+```json
+{
+  "steps": 20,
+  "accuracy": {"first": 0.0, "last": 0.25, "mean": 0.3375, "min": 0.0, "max": 0.875},
+  "family_accuracy": {"first": 0.0, "last": 0.0, "mean": 0.075, "min": 0.0, "max": 0.5},
+  "mean_reward": {"first": 0.0, "last": 0.25, "mean": 0.375, "min": 0.0, "max": 1.125},
+  "loss": {"first": 0.0, "last": 0.005100801587104797, "mean": -0.024954184237867594, "min": -0.1301363706588745, "max": 0.03617249056696892},
+  "avg_tokens": {"first": 219.5, "last": 234.625, "mean": 213.225, "min": 163.75, "max": 256.0},
+  "avg_wrong_tokens": {"first": 219.5, "last": 256.0, "mean": 232.69125, "min": 187.4, "max": 256.0},
+  "format_failure_rate": {"first": 0.0, "last": 0.0, "mean": 0.0, "min": 0.0, "max": 0.0}
+}
+```
+
+Held-out adapter eval:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.run_eval --config configs/eval_iso_calibrated_lam_0_50_20step_seed_23.yaml
+```
+
+```json
+{
+  "accuracy": 0.6375,
+  "avg_tokens": 206.2125,
+  "avg_wrong_tokens": 248.51724137931035,
+  "family_accuracy": 0.35,
+  "format_failure_rate": 0.0
+}
+```
+
+### Replication Conclusion
+
+Held-out comparison after adding explicit seed control:
+
+| Run | Accuracy | Family accuracy | Avg tokens | Wrong avg tokens | Format failures |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Base | 0.6000 | 0.2500 | 209.3250 | 249.9063 | 0.0000 |
+| Independent 20-step, seed 13 | 0.6125 | 0.2500 | 204.8500 | 241.2581 | 0.0000 |
+| Iso 20-step, lambda 0.50, seed 13 | 0.6250 | 0.3000 | 208.7875 | 250.9667 | 0.0000 |
+| Independent 20-step, seed 23 | 0.6375 | 0.3000 | 206.4000 | 249.3448 | 0.0000 |
+| Iso 20-step, lambda 0.50, seed 23 | 0.6375 | 0.3500 | 206.2125 | 248.5172 | 0.0000 |
+
+The seed 23 replicate confirms the direction of the first controlled pair:
+
+- Iso `lambda_iso = 0.50` again improves strict family accuracy over the matched independent control by `+0.05` absolute.
+- In seed 23, Iso matches independent single-instance accuracy exactly (`0.6375` vs `0.6375`).
+- Across both matched pairs, Iso improves family accuracy by `+0.05` without reducing held-out accuracy.
+- The result is still small and needs more seeds or a larger evaluation set before making a strong claim.
+
+Updated decision:
+
+The next useful compute is now a lambda sweep at the same 20-step scale for `lambda_iso = 0.25` and `lambda_iso = 1.00`, preferably with explicit seeds and the same held-out eval. Because training cost is high, run one lambda at a time and stop if held-out family accuracy regresses.

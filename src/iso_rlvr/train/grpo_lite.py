@@ -142,12 +142,18 @@ def build_rollout_batch(model, tokenizer, families: list[list[dict]], cfg: dict)
 
 def train(config_path: Path) -> None:
     cfg = load_yaml(config_path)
+    seed = int(cfg.get("seed", 13))
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
     output_dir = Path(cfg["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rows = read_jsonl(cfg["dataset_path"])
     grouped = list(group_by_family(rows).values())
-    rng = random.Random(13)
+    rng = random.Random(seed)
 
     model, tokenizer, _device = load_causal_lm(cfg["model_name"], cfg.get("device", "auto"))
     model.train()
@@ -170,6 +176,7 @@ def train(config_path: Path) -> None:
             metrics.update(
                 {
                     "step": step,
+                    "seed": seed,
                     "reward_mode": cfg.get("reward_mode", "iso"),
                     "loss": float(loss.detach().cpu()),
                     "mean_reward": float(rewards.mean()),

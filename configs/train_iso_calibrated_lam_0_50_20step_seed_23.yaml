@@ -1,0 +1,24 @@
+model_name: Qwen/Qwen2.5-Math-1.5B
+dataset_path: data/iso_math_calibrated.jsonl
+output_dir: outputs/runs/iso_calibrated_lam_0_50_20step_seed_23
+reward_mode: iso
+seed: 23
+max_steps: 20
+families_per_step: 2
+variants_per_family: 4
+samples_per_variant: 1
+max_new_tokens: 256
+temperature: 1.0
+top_p: 1.0
+learning_rate: 0.000001
+lambda_iso: 0.5
+lora:
+  enabled: true
+  r: 16
+  alpha: 32
+  dropout: 0.05
+prompt_template: |
+  Solve the problem. Show your reasoning briefly, then put the final answer after "Answer:".
+
+  Problem:
+  {problem}
