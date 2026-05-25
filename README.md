@@ -45,6 +45,25 @@ Progress log:
 - `phase2.md`: first controlled training start, reward-mode configs, and smoke results
 - `PLAN.md`: experiment roadmap
 
+Current Phase 2 controlled configs:
+
+```text
+configs/train_independent_calibrated_20step.yaml
+configs/train_iso_calibrated_lam_0_25_20step.yaml
+configs/train_iso_calibrated_lam_0_50_20step.yaml
+configs/train_iso_calibrated_lam_1_00_20step.yaml
+```
+
+First held-out controlled pair:
+
+| Run | Accuracy | Family accuracy |
+| --- | ---: | ---: |
+| Base | 0.6000 | 0.2500 |
+| Independent 20-step | 0.6125 | 0.2500 |
+| Iso 20-step, lambda 0.50 | 0.6250 | 0.3000 |
+
+This is an early positive signal for Iso-RLVR, not a final result. See `phase2.md` for run logs, caveats, and next decisions.
+
 ## Quick Start
 
 Create a Python environment, then install:

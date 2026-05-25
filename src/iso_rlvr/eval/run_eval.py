@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import torch
+from peft import PeftModel
 from tqdm import tqdm
 
 from iso_rlvr.io import load_yaml, read_jsonl, write_jsonl
@@ -38,6 +39,9 @@ def run_eval(config_path: Path) -> None:
         rows = rows[: int(cfg["max_examples"])]
 
     model, tokenizer, _device = load_causal_lm(cfg["model_name"], cfg.get("device", "auto"))
+    if cfg.get("adapter_path"):
+        model = PeftModel.from_pretrained(model, cfg["adapter_path"])
+        model.eval()
     template = cfg["prompt_template"]
 
     outputs = []

@@ -241,3 +241,214 @@ Before a longer matched run, increase `max_new_tokens` to at least `256` and kee
 Recommended immediate next step:
 
 Run held-out base eval on `data/iso_math_calibrated_heldout.jsonl`, then create longer matched training configs with `max_new_tokens: 256`.
+
+## Run Log: 2026-05-25
+
+Phase 2 scaffold was committed and pushed:
+
+```text
+commit: 2192f27 Add phase 2 training scaffold
+remote: origin/main
+```
+
+The package was installed editable in the `pytorch_5070ti` conda environment:
+
+```bash
+conda run -n pytorch_5070ti python -m pip install -e .
+```
+
+`pytest` was also installed into the same conda environment so the README test command can run directly.
+
+Test suite:
+
+```text
+12 passed in 5.15s
+```
+
+Pytest emitted a cache warning because it could not write one `.pytest_cache` path, but the tests completed successfully.
+
+### Held-Out Base Eval
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.run_eval --config configs/baseline_eval_calibrated_heldout.yaml
+```
+
+Result:
+
+```json
+{
+  "accuracy": 0.6,
+  "avg_tokens": 209.325,
+  "avg_wrong_tokens": 249.90625,
+  "family_accuracy": 0.25,
+  "format_failure_rate": 0.0
+}
+```
+
+Output files:
+
+```text
+outputs/eval/baseline_qwen25_math_1_5b_calibrated_heldout.jsonl
+outputs/eval/baseline_qwen25_math_1_5b_calibrated_heldout.summary.json
+```
+
+Conclusion:
+
+The held-out split is still in the target range. Single-instance accuracy is moderate at `0.60`, while strict family accuracy remains low at `0.25`. This keeps the central Iso-RLVR question meaningful: can training improve whole-family consistency without simply overfitting individual variants?
+
+The token-cap issue is also confirmed. Average completion length is `209.325`, and wrong completions average `249.90625` tokens under a `256` token cap. Longer training runs should use `max_new_tokens: 256` at minimum and should track whether wrong answers are still saturating that cap.
+
+### Matched 20-Step Configs
+
+Training configs:
+
+```text
+configs/train_independent_calibrated_20step.yaml
+configs/train_iso_calibrated_lam_0_25_20step.yaml
+configs/train_iso_calibrated_lam_0_50_20step.yaml
+configs/train_iso_calibrated_lam_1_00_20step.yaml
+```
+
+Adapter eval configs:
+
+```text
+configs/eval_independent_calibrated_20step.yaml
+configs/eval_iso_calibrated_lam_0_25_20step.yaml
+configs/eval_iso_calibrated_lam_0_50_20step.yaml
+configs/eval_iso_calibrated_lam_1_00_20step.yaml
+```
+
+Eval now accepts an optional `adapter_path`, so saved LoRA adapters can be evaluated against the same held-out set.
+
+### Independent 20-Step Control
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.train.grpo_lite --config configs/train_independent_calibrated_20step.yaml
+```
+
+Runtime:
+
+```text
+about 1h35m
+```
+
+Output:
+
+```text
+outputs/runs/independent_calibrated_20step/
+outputs/runs/independent_calibrated_20step/adapter_or_model/adapter_model.safetensors
+outputs/runs/independent_calibrated_20step/train_log.jsonl
+```
+
+Training-log aggregate:
+
+```json
+{
+  "steps": 20,
+  "accuracy": {"first": 0.375, "last": 0.125, "mean": 0.38125, "min": 0.125, "max": 0.75},
+  "family_accuracy": {"first": 0.0, "last": 0.0, "mean": 0.05, "min": 0.0, "max": 0.5},
+  "mean_reward": {"first": 0.375, "last": 0.125, "mean": 0.38125, "min": 0.125, "max": 0.75},
+  "loss": {"first": -0.044440969824790955, "last": 0.13566374778747559, "mean": -0.037719862163066865, "min": -0.14888335764408112, "max": 0.13566374778747559},
+  "avg_tokens": {"first": 215.875, "last": 246.75, "mean": 214.225, "min": 151.5, "max": 246.75},
+  "avg_wrong_tokens": {"first": 235.8, "last": 256.0, "mean": 236.4080952380952, "min": 167.0, "max": 256.0},
+  "format_failure_rate": {"first": 0.0, "last": 0.0, "mean": 0.0, "min": 0.0, "max": 0.0}
+}
+```
+
+Held-out adapter eval:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.run_eval --config configs/eval_independent_calibrated_20step.yaml
+```
+
+```json
+{
+  "accuracy": 0.6125,
+  "avg_tokens": 204.85,
+  "avg_wrong_tokens": 241.25806451612902,
+  "family_accuracy": 0.25,
+  "format_failure_rate": 0.0
+}
+```
+
+Conclusion:
+
+The independent control gives a tiny single-instance improvement over the base held-out score (`0.60` to `0.6125`) but no strict family-accuracy improvement (`0.25` to `0.25`).
+
+### Iso 20-Step Run, Lambda 0.50
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.train.grpo_lite --config configs/train_iso_calibrated_lam_0_50_20step.yaml
+```
+
+Runtime:
+
+```text
+about 35m34s
+```
+
+Output:
+
+```text
+outputs/runs/iso_calibrated_lam_0_50_20step/
+outputs/runs/iso_calibrated_lam_0_50_20step/adapter_or_model/adapter_model.safetensors
+outputs/runs/iso_calibrated_lam_0_50_20step/train_log.jsonl
+```
+
+Training-log aggregate:
+
+```json
+{
+  "steps": 20,
+  "accuracy": {"first": 0.125, "last": 0.625, "mean": 0.36875, "min": 0.0, "max": 0.75},
+  "family_accuracy": {"first": 0.0, "last": 0.0, "mean": 0.075, "min": 0.0, "max": 0.5},
+  "mean_reward": {"first": 0.125, "last": 0.625, "mean": 0.40625, "min": 0.0, "max": 1.0},
+  "loss": {"first": -0.066669762134552, "last": 0.10743840038776398, "mean": -0.04517454393208027, "min": -0.3075815737247467, "max": 0.10743840038776398},
+  "avg_tokens": {"first": 184.25, "last": 187.625, "mean": 202.73125, "min": 160.25, "max": 252.625},
+  "avg_wrong_tokens": {"first": 189.28571428571428, "last": 250.0, "mean": 225.81845238095238, "min": 189.28571428571428, "max": 256.0},
+  "format_failure_rate": {"first": 0.0, "last": 0.0, "mean": 0.00625, "min": 0.0, "max": 0.125}
+}
+```
+
+Held-out adapter eval:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.run_eval --config configs/eval_iso_calibrated_lam_0_50_20step.yaml
+```
+
+```json
+{
+  "accuracy": 0.625,
+  "avg_tokens": 208.7875,
+  "avg_wrong_tokens": 250.96666666666667,
+  "family_accuracy": 0.3,
+  "format_failure_rate": 0.0
+}
+```
+
+### First Controlled Pair Conclusion
+
+Held-out comparison:
+
+| Run | Accuracy | Family accuracy | Avg tokens | Wrong avg tokens | Format failures |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Base | 0.6000 | 0.2500 | 209.3250 | 249.9063 | 0.0000 |
+| Independent 20-step | 0.6125 | 0.2500 | 204.8500 | 241.2581 | 0.0000 |
+| Iso 20-step, lambda 0.50 | 0.6250 | 0.3000 | 208.7875 | 250.9667 | 0.0000 |
+
+This is not enough evidence for a strong claim, but it is the first positive signal:
+
+- Independent reward slightly improves single-instance accuracy but does not move strict family accuracy.
+- Iso-RLVR with `lambda_iso = 0.50` improves both single-instance accuracy and strict family accuracy on the held-out calibrated split.
+- The family-accuracy gain is small (`+0.05` absolute over base and independent), so it needs replication before we trust it.
+- Wrong answers still often saturate the `256` token cap, especially in the Iso held-out eval. Generation length remains a confound.
+
+Decision:
+
+Do not run the full lambda sweep blindly yet. The next best step is to replicate the matched pair with a second training seed or add explicit training/eval seed controls, then run `lambda_iso = 0.25` and `1.00` only if the replicated `0.50` result remains directionally positive.

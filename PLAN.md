@@ -75,6 +75,8 @@ This is the control condition.
 
 Status: three-step independent calibrated smoke completed. The adapter saved and the log captured one nonzero-reward step. See `phase2.md`.
 
+Status: 20-step independent control completed and evaluated on held-out calibrated data. Held-out accuracy was `0.6125`; family accuracy stayed at `0.25`. See `phase2.md`.
+
 Minimum Phase 2 run:
 
 ```text
@@ -97,6 +99,10 @@ For a family, `family_consistency = 1` only when all sampled answers match their
 Start with strict family correctness. Then add partial consistency variants.
 
 Status: three-step Iso calibrated smoke with `lambda_iso = 0.50` completed. The adapter saved and the log captured nonzero rewards. See `phase2.md`.
+
+Status: 20-step Iso run with `lambda_iso = 0.50` completed and evaluated on held-out calibrated data. Held-out accuracy was `0.625`; family accuracy improved to `0.30`. See `phase2.md`.
+
+The `lambda_iso = 0.25` and `lambda_iso = 1.00` configs exist, but the next recommended step is replication or explicit seed control before running the full sweep.
 
 Initial Iso-RLVR runs:
 
