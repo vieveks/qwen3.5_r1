@@ -2,6 +2,8 @@
 
 Date: 2026-05-24
 
+For a critic-facing synthesis of the current evidence, model/config choices, code architecture, dataset details, limitations, and next experiments, see `CRITIC_BRIEF.md`. This file remains the chronological run log and audit trail.
+
 ## Objective
 
 Phase 2 starts the first controlled training comparison on the calibrated procedural dataset from Phase 1.

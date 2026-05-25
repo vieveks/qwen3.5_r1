@@ -43,6 +43,7 @@ Progress log:
 
 - `phase1.md`: full Phase 1 run log, dataset calibration, field scan, and conclusions
 - `phase2.md`: first controlled training start, reward-mode configs, and smoke results
+- `CRITIC_BRIEF.md`: critic-facing summary of the current evidence, code architecture, datasets, limitations, and next experiments
 - `PLAN.md`: experiment roadmap
 
 Current Phase 2 controlled configs:

@@ -160,6 +160,14 @@ The report should answer:
 - Does it improve pass@k or only pass@1?
 - Are outputs shorter, longer, or unchanged?
 
+Current review packet:
+
+```text
+CRITIC_BRIEF.md
+```
+
+This document summarizes the current model choices, code architecture, dataset construction, completed results, limitations, and recommended next experiments for external criticism. It should be kept in sync whenever a new run changes the interpretation.
+
 ## Success Criteria
 
 Minimum interesting result:
