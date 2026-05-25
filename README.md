@@ -42,6 +42,7 @@ That result is useful because single-question accuracy is moderate while whole-f
 Progress log:
 
 - `phase1.md`: full Phase 1 run log, dataset calibration, field scan, and conclusions
+- `phase2.md`: first controlled training start, reward-mode configs, and smoke results
 - `PLAN.md`: experiment roadmap
 
 ## Quick Start

@@ -73,6 +73,8 @@ reward_i = 1 if extracted_answer_i == gold_i else 0
 
 This is the control condition.
 
+Status: three-step independent calibrated smoke completed. The adapter saved and the log captured one nonzero-reward step. See `phase2.md`.
+
 Minimum Phase 2 run:
 
 ```text
@@ -93,6 +95,8 @@ reward_i = correctness_i + lambda_iso * family_consistency
 For a family, `family_consistency = 1` only when all sampled answers match their gold answers or match an explicitly known transformation relation.
 
 Start with strict family correctness. Then add partial consistency variants.
+
+Status: three-step Iso calibrated smoke with `lambda_iso = 0.50` completed. The adapter saved and the log captured nonzero rewards. See `phase2.md`.
 
 Initial Iso-RLVR runs:
 

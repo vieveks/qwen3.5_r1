@@ -87,6 +87,15 @@ def grpo_loss(
     return torch.stack(losses).mean()
 
 
+def reward_values(scored: list[ScoredResponse], cfg: dict) -> list[float]:
+    reward_mode = cfg.get("reward_mode", "iso")
+    if reward_mode == "independent":
+        return [float(item.correct) for item in scored]
+    if reward_mode == "iso":
+        return iso_reward_values(scored, float(cfg.get("lambda_iso", 0.5)))
+    raise ValueError(f"Unknown reward_mode {reward_mode!r}; expected 'independent' or 'iso'")
+
+
 def build_rollout_batch(model, tokenizer, families: list[list[dict]], cfg: dict):
     template = cfg["prompt_template"]
     sequences = []
@@ -127,10 +136,7 @@ def build_rollout_batch(model, tokenizer, families: list[list[dict]], cfg: dict)
                         "response_tokens": token_count,
                     }
                 )
-    rewards = torch.tensor(
-        iso_reward_values(scored, float(cfg.get("lambda_iso", 0.5))),
-        dtype=torch.float32,
-    )
+    rewards = torch.tensor(reward_values(scored, cfg), dtype=torch.float32)
     return sequences, prompt_lengths, rewards, scored, records
 
 
@@ -164,6 +170,7 @@ def train(config_path: Path) -> None:
             metrics.update(
                 {
                     "step": step,
+                    "reward_mode": cfg.get("reward_mode", "iso"),
                     "loss": float(loss.detach().cpu()),
                     "mean_reward": float(rewards.mean()),
                     "max_reward": float(rewards.max()),
