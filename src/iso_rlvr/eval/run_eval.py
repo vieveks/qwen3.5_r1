@@ -8,10 +8,11 @@ import torch
 from peft import PeftModel
 from tqdm import tqdm
 
-from iso_rlvr.io import load_yaml, read_jsonl, write_jsonl
+from iso_rlvr.io import load_yaml, read_jsonl
 from iso_rlvr.modeling import count_completion_tokens, load_causal_lm
 from iso_rlvr.rewards.answer import extract_answer, is_correct
 from iso_rlvr.rewards.iso import ScoredResponse, summarize
+from iso_rlvr.eval.summary import summarize_by_family_type
 
 
 def generate_one(model, tokenizer, prompt: str, cfg: dict) -> str:
@@ -38,44 +39,59 @@ def run_eval(config_path: Path) -> None:
     if cfg.get("max_examples"):
         rows = rows[: int(cfg["max_examples"])]
 
+    output_path = Path(cfg["output_path"])
+    resume = bool(cfg.get("resume", False))
+    outputs = read_jsonl(output_path) if resume and output_path.exists() else []
+    completed = {(row["family_id"], row["variant_id"]) for row in outputs}
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
     model, tokenizer, _device = load_causal_lm(cfg["model_name"], cfg.get("device", "auto"))
     if cfg.get("adapter_path"):
         model = PeftModel.from_pretrained(model, cfg["adapter_path"])
         model.eval()
     template = cfg["prompt_template"]
 
-    outputs = []
+    log_mode = "a" if resume and output_path.exists() else "w"
+    with output_path.open(log_mode, encoding="utf-8") as output_handle:
+        for row in tqdm(rows, desc="eval"):
+            row_key = (row["family_id"], row["variant_id"])
+            if row_key in completed:
+                continue
+            prompt = template.format(problem=row["problem"])
+            response = generate_one(model, tokenizer, prompt, cfg)
+            extracted = extract_answer(response)
+            correct = is_correct(extracted, row["answer"])
+            token_count = count_completion_tokens(tokenizer, prompt, response)
+            result = {
+                **row,
+                "prompt": prompt,
+                "model_response": response,
+                "extracted_answer": extracted,
+                "correct": correct,
+                "response_tokens": token_count,
+            }
+            outputs.append(result)
+            completed.add(row_key)
+            output_handle.write(json.dumps(result, sort_keys=True) + "\n")
+            output_handle.flush()
+
     scored = []
-    for row in tqdm(rows, desc="eval"):
-        prompt = template.format(problem=row["problem"])
-        response = generate_one(model, tokenizer, prompt, cfg)
-        extracted = extract_answer(response)
-        correct = is_correct(extracted, row["answer"])
-        token_count = count_completion_tokens(tokenizer, prompt, response)
-        result = {
-            **row,
-            "prompt": prompt,
-            "model_response": response,
-            "extracted_answer": extracted,
-            "correct": correct,
-            "response_tokens": token_count,
-        }
-        outputs.append(result)
+    for row in outputs:
         scored.append(
             ScoredResponse(
                 family_id=row["family_id"],
                 variant_id=row["variant_id"],
                 gold=row["answer"],
-                response=response,
-                correct=correct,
-                extracted_answer=extracted,
-                token_count=token_count,
+                response=row["model_response"],
+                correct=row["correct"],
+                extracted_answer=row["extracted_answer"],
+                token_count=row["response_tokens"],
             )
         )
 
-    write_jsonl(cfg["output_path"], outputs)
     summary = summarize(scored)
-    summary_path = Path(cfg["output_path"]).with_suffix(".summary.json")
+    summary["by_family_type"] = summarize_by_family_type(outputs)
+    summary_path = output_path.with_suffix(".summary.json")
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps(summary, indent=2, sort_keys=True))

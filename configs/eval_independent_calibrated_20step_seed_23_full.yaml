@@ -1,0 +1,14 @@
+model_name: Qwen/Qwen2.5-Math-1.5B
+adapter_path: outputs/runs/independent_calibrated_20step_seed_23/adapter_or_model
+dataset_path: data/iso_math_calibrated_heldout_clean.jsonl
+output_path: outputs/eval/independent_calibrated_20step_seed_23_heldout_clean_full.jsonl
+max_new_tokens: 256
+temperature: 0.0
+top_p: 1.0
+device: auto
+resume: true
+prompt_template: |
+  Solve the problem. Show your reasoning briefly, then put the final answer after "Answer:".
+
+  Problem:
+  {problem}

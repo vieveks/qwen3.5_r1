@@ -9,14 +9,22 @@ import random
 from iso_rlvr.data.families import make_family
 
 
-def build_dataset(out: Path, families: int, variants: int, seed: int, profile: str) -> None:
+def generate_dataset(families: int, variants: int, seed: int, profile: str) -> list[dict]:
     rng = random.Random(seed)
+    rows = []
+    for family_idx in range(families):
+        family_id = f"fam_{family_idx:06d}"
+        for variant in make_family(rng, family_id, variants, profile):
+            rows.append(asdict(variant))
+    return rows
+
+
+def build_dataset(out: Path, families: int, variants: int, seed: int, profile: str) -> None:
+    rows = generate_dataset(families, variants, seed, profile)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as handle:
-        for family_idx in range(families):
-            family_id = f"fam_{family_idx:06d}"
-            for variant in make_family(rng, family_id, variants, profile):
-                handle.write(json.dumps(asdict(variant), sort_keys=True) + "\n")
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
 def main() -> None:

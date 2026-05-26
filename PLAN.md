@@ -134,6 +134,15 @@ The first success criterion is not higher reward. The first success criterion is
 
 ## Phase 4: Robustness Tests
 
+Before Phase 4, Phase 3 hardens measurement. See `phase3.md`.
+
+Phase 3 status:
+
+- Add exact train/held-out overlap audit.
+- Add family-type breakdowns to eval summaries.
+- Add full held-out eval configs for all 800 calibrated held-out rows.
+- Run full held-out base, independent, and Iso adapter evals before changing trainer code.
+
 Evaluate on:
 
 - Seen family types, unseen parameters

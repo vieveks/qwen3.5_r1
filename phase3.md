@@ -1,0 +1,261 @@
+# Phase 3: Measurement Hardening
+
+Date: 2026-05-26
+
+## Objective
+
+Phase 3 strengthens the measurement layer before changing the trainer. The current Iso `lambda_iso=0.50` result is directionally positive across two seeds, but the held-out eval was only 80 rows and did not include family-type breakdowns or a documented dataset-overlap audit.
+
+The Phase 3 question is:
+
+```text
+Does the Iso-RLVR family-accuracy signal survive stricter measurement?
+```
+
+## Starting State
+
+The latest Phase 2 result:
+
+| Run | Accuracy | Family accuracy |
+| --- | ---: | ---: |
+| Base held-out, 80 rows | 0.6000 | 0.2500 |
+| Independent 20-step, seed 13, 80 rows | 0.6125 | 0.2500 |
+| Iso 20-step, `lambda_iso=0.50`, seed 13, 80 rows | 0.6250 | 0.3000 |
+| Independent 20-step, seed 23, 80 rows | 0.6375 | 0.3000 |
+| Iso 20-step, `lambda_iso=0.50`, seed 23, 80 rows | 0.6375 | 0.3500 |
+
+Conclusion carried into Phase 3:
+
+```text
+Promising local signal, not yet a strong result.
+```
+
+## Phase 3 Plan
+
+Run the work in this order:
+
+1. Add exact train/held-out overlap audit.
+2. Add family-type breakdowns to evaluation summaries.
+3. Add full held-out eval configs that use all 800 held-out rows.
+4. Run cheap validation checks.
+5. Run full held-out evals one at a time.
+6. Update this document after each result.
+7. Only after measurement is stronger, continue the lambda sweep.
+
+## Added Tooling
+
+Dataset overlap audit:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.audit_dataset_overlap --train data/iso_math_calibrated.jsonl --heldout data/iso_math_calibrated_heldout.jsonl --out outputs/audit/calibrated_train_vs_heldout_overlap.json
+```
+
+The audit hashes:
+
+```text
+family_type
+problem
+answer
+```
+
+Family-type breakdowns are now written into every new eval summary under:
+
+```text
+by_family_type
+```
+
+This lets us distinguish a real broad improvement from a gain concentrated in one procedural family type.
+
+Clean held-out generation:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.data.build_clean_heldout --train data/iso_math_calibrated.jsonl --out data/iso_math_calibrated_heldout_clean.jsonl --families 200 --variants 4 --profile calibrated --start-seed 32 --max-seed 200
+```
+
+This searches for a held-out generator seed with:
+
+```text
+train/held-out exact overlap: 0
+```
+
+Internal held-out duplicates are still reported. Requiring zero internal duplicates at 800 rows is too strict for the current discrete calibrated generator, especially the heavily weighted rational-linear family type.
+
+## Full Held-Out Eval Configs
+
+These configs evaluate all rows in `data/iso_math_calibrated_heldout_clean.jsonl` because they do not set `max_examples`:
+
+```text
+configs/baseline_eval_calibrated_heldout_full.yaml
+configs/eval_independent_calibrated_20step_full.yaml
+configs/eval_iso_calibrated_lam_0_50_20step_full.yaml
+configs/eval_independent_calibrated_20step_seed_23_full.yaml
+configs/eval_iso_calibrated_lam_0_50_20step_seed_23_full.yaml
+```
+
+They also set:
+
+```text
+resume: true
+```
+
+Long evals now write one JSONL row at a time and skip completed `(family_id, variant_id)` rows when restarted. This is necessary because a clean 800-row eval can take more than an hour at `max_new_tokens: 256`.
+
+## Run Log
+
+### Tooling Validation
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m pytest tests
+```
+
+Result:
+
+```text
+15 passed
+```
+
+Pytest still emits a cache warning because this Windows workspace denies writing one `.pytest_cache` path, but tests pass.
+
+### Existing Held-Out Overlap Audit
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.audit_dataset_overlap --train data/iso_math_calibrated.jsonl --heldout data/iso_math_calibrated_heldout.jsonl --out outputs/audit/calibrated_train_vs_heldout_overlap.json
+```
+
+Result:
+
+```json
+{
+  "train_rows": 800,
+  "heldout_rows": 800,
+  "train_unique_fingerprints": 798,
+  "heldout_unique_fingerprints": 797,
+  "train_duplicate_fingerprints": 2,
+  "heldout_duplicate_fingerprints": 3,
+  "overlap_count": 3
+}
+```
+
+The 3 exact train/held-out overlaps are all `rational_linear_equation` rows. This does not affect the earlier 80-row eval slice, because those duplicate held-out families occur after the first 80 rows. It does mean the existing 800-row held-out file should not be used as the final full held-out benchmark.
+
+Decision:
+
+```text
+Generate a clean held-out file before running full 800-row model evals.
+```
+
+### Family-Type Breakdown For Existing 80-Row Evals
+
+The existing eval outputs were re-summarized with the new family-type breakdown command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.summarize_eval_output --input outputs/eval/<run>.jsonl --out outputs/eval/<run>.summary.json
+```
+
+Breakdown:
+
+| Run | Type | Examples | Families | Accuracy | Family accuracy |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Base | `chinese_remainder` | 8 | 2 | 0.0000 | 0.0000 |
+| Base | `missing_average` | 12 | 3 | 0.5833 | 0.0000 |
+| Base | `rational_linear_equation` | 52 | 13 | 0.7885 | 0.3846 |
+| Base | `rational_system_target` | 8 | 2 | 0.0000 | 0.0000 |
+| Independent seed 13 | `chinese_remainder` | 8 | 2 | 0.0000 | 0.0000 |
+| Independent seed 13 | `missing_average` | 12 | 3 | 0.6667 | 0.0000 |
+| Independent seed 13 | `rational_linear_equation` | 52 | 13 | 0.7885 | 0.3846 |
+| Independent seed 13 | `rational_system_target` | 8 | 2 | 0.0000 | 0.0000 |
+| Iso seed 13 | `chinese_remainder` | 8 | 2 | 0.0000 | 0.0000 |
+| Iso seed 13 | `missing_average` | 12 | 3 | 0.6667 | 0.0000 |
+| Iso seed 13 | `rational_linear_equation` | 52 | 13 | 0.8077 | 0.4615 |
+| Iso seed 13 | `rational_system_target` | 8 | 2 | 0.0000 | 0.0000 |
+| Independent seed 23 | `chinese_remainder` | 8 | 2 | 0.0000 | 0.0000 |
+| Independent seed 23 | `missing_average` | 12 | 3 | 0.7500 | 0.3333 |
+| Independent seed 23 | `rational_linear_equation` | 52 | 13 | 0.8077 | 0.3846 |
+| Independent seed 23 | `rational_system_target` | 8 | 2 | 0.0000 | 0.0000 |
+| Iso seed 23 | `chinese_remainder` | 8 | 2 | 0.0000 | 0.0000 |
+| Iso seed 23 | `missing_average` | 12 | 3 | 0.7500 | 0.3333 |
+| Iso seed 23 | `rational_linear_equation` | 52 | 13 | 0.8077 | 0.4615 |
+| Iso seed 23 | `rational_system_target` | 8 | 2 | 0.0000 | 0.0000 |
+
+Conclusion:
+
+The observed 80-row Iso family-accuracy gain is concentrated in `rational_linear_equation`. `chinese_remainder` and `rational_system_target` remain unsolved in this slice across all runs. `missing_average` improves under training, but the Iso-vs-independent difference is not visible there in this slice.
+
+This narrows the current claim:
+
+```text
+The current positive signal is not broad transformation robustness yet.
+It is a small family-consistency gain concentrated in one procedural family type.
+```
+
+### Clean Held-Out Generation
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.data.build_clean_heldout --train data/iso_math_calibrated.jsonl --out data/iso_math_calibrated_heldout_clean.jsonl --families 200 --variants 4 --profile calibrated --start-seed 32 --max-seed 200
+```
+
+Result:
+
+```json
+{
+  "selected_seed": 81,
+  "output_path": "data\\iso_math_calibrated_heldout_clean.jsonl",
+  "train_rows": 800,
+  "heldout_rows": 800,
+  "train_unique_fingerprints": 798,
+  "heldout_unique_fingerprints": 794,
+  "train_duplicate_fingerprints": 2,
+  "heldout_duplicate_fingerprints": 6,
+  "overlap_count": 0
+}
+```
+
+Clean held-out family-type counts:
+
+| Family type | Rows |
+| --- | ---: |
+| `chinese_remainder` | 112 |
+| `missing_average` | 252 |
+| `rational_linear_equation` | 392 |
+| `rational_system_target` | 44 |
+
+Conclusion:
+
+The clean held-out dataset removes exact train/held-out overlap. It still has 6 internal duplicate fingerprints, which is acceptable for now as an artifact of the finite procedural parameter space. The family-type distribution differs from seed 31, so clean full-heldout numbers should be treated as a new benchmark, not a direct replacement for the earlier 80-row slice.
+
+### First Full Eval Attempt
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.run_eval --config configs/baseline_eval_calibrated_heldout_full.yaml
+```
+
+Status:
+
+```text
+stopped at 319/800 after about 32 minutes
+```
+
+Conclusion:
+
+The full clean eval is too expensive to run with all-or-nothing output. The evaluator was changed to write incremental JSONL rows and support resume before restarting the full benchmark.
+
+## Decision Rule
+
+Continue to the lambda sweep only if the clean full held-out measurement does not erase the current signal.
+
+Minimum useful continuation:
+
+```text
+Iso lambda 0.50 should keep equal or better family accuracy than matched independent reward
+without a meaningful accuracy loss.
+```
+
+If the full held-out result is flat or negative, pause training and inspect family-type breakdowns before spending more GPU time.
