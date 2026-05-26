@@ -247,6 +247,60 @@ Conclusion:
 
 The full clean eval is too expensive to run with all-or-nothing output. The evaluator was changed to write incremental JSONL rows and support resume before restarting the full benchmark.
 
+### Base Full Clean Held-Out Eval
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.run_eval --config configs/baseline_eval_calibrated_heldout_full.yaml
+```
+
+Runtime:
+
+```text
+about 1h15m
+```
+
+Output:
+
+```text
+outputs/eval/baseline_qwen25_math_1_5b_calibrated_heldout_clean_full.jsonl
+outputs/eval/baseline_qwen25_math_1_5b_calibrated_heldout_clean_full.summary.json
+rows: 800
+```
+
+Overall result:
+
+```json
+{
+  "accuracy": 0.58875,
+  "avg_tokens": 208.28625,
+  "avg_wrong_tokens": 239.7629179331307,
+  "family_accuracy": 0.24,
+  "format_failure_rate": 0.0
+}
+```
+
+Family-type breakdown:
+
+| Family type | Examples | Families | Accuracy | Family accuracy | Avg tokens | Wrong avg tokens |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 112 | 28 | 0.0268 | 0.0000 | 239.2411 | 240.6972 |
+| `missing_average` | 252 | 63 | 0.6627 | 0.1905 | 210.4881 | 228.0118 |
+| `rational_linear_equation` | 392 | 98 | 0.7679 | 0.3673 | 192.6709 | 241.7692 |
+| `rational_system_target` | 44 | 11 | 0.0000 | 0.0000 | 256.0000 | 256.0000 |
+
+Conclusion:
+
+The clean full base score is close to the earlier 80-row base score (`0.58875` vs `0.6000` accuracy, `0.24` vs `0.25` family accuracy), so the earlier small slice was not wildly optimistic at the aggregate level. The family-type breakdown confirms the central difficulty split:
+
+- `rational_linear_equation` is the strongest solved type.
+- `missing_average` is partially solved, but family consistency is still low.
+- `chinese_remainder` is almost entirely unsolved.
+- `rational_system_target` is completely unsolved and saturates the 256-token cap.
+
+This means the next comparison should check whether independent and Iso adapters improve only the already-solvable types or produce any movement on the currently unsolved types.
+
 ## Decision Rule
 
 Continue to the lambda sweep only if the clean full held-out measurement does not erase the current signal.
