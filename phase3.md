@@ -357,6 +357,97 @@ On the full clean held-out set, the seed 13 independent adapter does not reprodu
 
 The family-type pattern is also mostly flat. The only visible new movement is one correct `rational_system_target` row, but family accuracy remains `0.0` for that type and wrong answers still saturate the token cap. This makes the Iso seed 13 full-clean eval the next critical comparison: the earlier 80-row result needs to show a real family-accuracy advantage on the clean 800-row benchmark, not just on the small slice.
 
+### Iso `lambda_iso=0.50` 20-Step Full Clean Held-Out Eval, Seed 13
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.run_eval --config configs/eval_iso_calibrated_lam_0_50_20step_full.yaml
+```
+
+Runtime:
+
+```text
+about 2h21m
+```
+
+Output:
+
+```text
+outputs/eval/iso_calibrated_lam_0_50_20step_heldout_clean_full.jsonl
+outputs/eval/iso_calibrated_lam_0_50_20step_heldout_clean_full.summary.json
+rows: 800
+```
+
+Overall result:
+
+```json
+{
+  "accuracy": 0.58,
+  "avg_tokens": 209.27125,
+  "avg_wrong_tokens": 241.41071428571428,
+  "family_accuracy": 0.23,
+  "format_failure_rate": 0.0
+}
+```
+
+Family-type breakdown:
+
+| Family type | Examples | Families | Accuracy | Family accuracy | Avg tokens | Wrong avg tokens |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 112 | 28 | 0.0268 | 0.0000 | 244.7411 | 245.9083 |
+| `missing_average` | 252 | 63 | 0.6429 | 0.1746 | 212.4802 | 229.4444 |
+| `rational_linear_equation` | 392 | 98 | 0.7628 | 0.3571 | 191.8291 | 240.8172 |
+| `rational_system_target` | 44 | 11 | 0.0000 | 0.0000 | 256.0000 | 256.0000 |
+
+Comparison to clean base and matched independent:
+
+| Run | Accuracy | Family accuracy | Avg tokens | Wrong avg tokens |
+| --- | ---: | ---: | ---: | ---: |
+| Base full clean | 0.5888 | 0.2400 | 208.2863 | 239.7629 |
+| Independent seed 13 full clean | 0.5875 | 0.2400 | 208.6563 | 239.2970 |
+| Iso `lambda_iso=0.50` seed 13 full clean | 0.5800 | 0.2300 | 209.2713 | 241.4107 |
+
+Delta from matched independent:
+
+| Metric | Iso - Independent |
+| --- | ---: |
+| Accuracy | -0.0075 |
+| Family accuracy | -0.0100 |
+| Avg tokens | +0.6150 |
+| Wrong avg tokens | +2.1137 |
+
+Conclusion:
+
+The seed 13 Iso result does not survive the full clean held-out measurement. The earlier 80-row Iso family-accuracy gain was `+0.05` over matched independent, but the full clean result is `-0.01` family accuracy and `-0.0075` row accuracy. The result is also below the base model on both metrics.
+
+The per-family breakdown shows the regression is not offset by movement on the previously unsolved families:
+
+- `chinese_remainder` stays essentially unsolved with `0.0` family accuracy.
+- `rational_system_target` remains completely unsolved and still saturates the 256-token cap.
+- `missing_average` is worse than independent on row accuracy and family accuracy.
+- `rational_linear_equation` is slightly better than independent on row accuracy, but worse on strict family accuracy and still below the earlier 80-row family-consistency signal.
+
+This changes the Phase 3 interpretation:
+
+```text
+The current Iso objective, as implemented in the 20-step trainer, is not yet a robust improvement.
+The positive Phase 2 signal was a small-slice artifact or at least too fragile to justify a lambda sweep.
+```
+
+Decision:
+
+```text
+Pause the lambda sweep.
+Do not spend more GPU time on the current Iso implementation until the training objective is aligned with GRPO-style group-relative optimization and the measurement target is tightened.
+```
+
+Recommended next engineering step:
+
+```text
+Implement a true grouped GRPO-style trainer over same-family variants, then re-run a small controlled smoke test before returning to full clean held-out evals.
+```
+
 ## Decision Rule
 
 Continue to the lambda sweep only if the clean full held-out measurement does not erase the current signal.
@@ -369,3 +460,10 @@ without a meaningful accuracy loss.
 ```
 
 If the full held-out result is flat or negative, pause training and inspect family-type breakdowns before spending more GPU time.
+
+Current status after the seed 13 Iso full-clean eval:
+
+```text
+The decision rule failed.
+The next phase should be objective correction, not more lambda sweeps on the current trainer.
+```
