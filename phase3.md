@@ -301,6 +301,62 @@ The clean full base score is close to the earlier 80-row base score (`0.58875` v
 
 This means the next comparison should check whether independent and Iso adapters improve only the already-solvable types or produce any movement on the currently unsolved types.
 
+### Independent 20-Step Full Clean Held-Out Eval, Seed 13
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.run_eval --config configs/eval_independent_calibrated_20step_full.yaml
+```
+
+Runtime:
+
+```text
+about 2h22m
+```
+
+Output:
+
+```text
+outputs/eval/independent_calibrated_20step_heldout_clean_full.jsonl
+outputs/eval/independent_calibrated_20step_heldout_clean_full.summary.json
+rows: 800
+```
+
+Overall result:
+
+```json
+{
+  "accuracy": 0.5875,
+  "avg_tokens": 208.65625,
+  "avg_wrong_tokens": 239.2969696969697,
+  "family_accuracy": 0.24,
+  "format_failure_rate": 0.0
+}
+```
+
+Family-type breakdown:
+
+| Family type | Examples | Families | Accuracy | Family accuracy | Avg tokens | Wrong avg tokens |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 112 | 28 | 0.0268 | 0.0000 | 243.2500 | 243.4495 |
+| `missing_average` | 252 | 63 | 0.6667 | 0.1905 | 209.1389 | 225.6905 |
+| `rational_linear_equation` | 392 | 98 | 0.7602 | 0.3673 | 193.2755 | 239.0000 |
+| `rational_system_target` | 44 | 11 | 0.0227 | 0.0000 | 254.8636 | 256.0000 |
+
+Comparison to clean base:
+
+| Run | Accuracy | Family accuracy | Avg tokens | Wrong avg tokens |
+| --- | ---: | ---: | ---: | ---: |
+| Base full clean | 0.5888 | 0.2400 | 208.2863 | 239.7629 |
+| Independent seed 13 full clean | 0.5875 | 0.2400 | 208.6563 | 239.2970 |
+
+Conclusion:
+
+On the full clean held-out set, the seed 13 independent adapter does not reproduce the small 80-row gain. It is effectively flat against base: row accuracy is slightly lower by `-0.00125`, and strict family accuracy is unchanged at `0.24`.
+
+The family-type pattern is also mostly flat. The only visible new movement is one correct `rational_system_target` row, but family accuracy remains `0.0` for that type and wrong answers still saturate the token cap. This makes the Iso seed 13 full-clean eval the next critical comparison: the earlier 80-row result needs to show a real family-accuracy advantage on the clean 800-row benchmark, not just on the small slice.
+
 ## Decision Rule
 
 Continue to the lambda sweep only if the clean full held-out measurement does not erase the current signal.
