@@ -833,6 +833,25 @@ But it did not solve answer quality. Accuracy remains low, and many wrong output
 
 This means Phase 5 succeeded at stabilizing the parser/verifier interface but has not yet produced a model ready for GRPO. We need a stronger format SFT run, a small reasoning SFT component, or dataset/prompt changes before policy optimization.
 
+Critic interpretation:
+
+The high `suspicious_rate` should not be treated as a minor diagnostic artifact. The representative wrong completion:
+
+```xml
+<answers>
+<answer_1>100</answer_1>
+<answer_2>100</answer_2>
+</answers>
+```
+
+when the gold answer is:
+
+```text
+["32", "32"]
+```
+
+shows a real failure mode: the adapter learned to emit valid repeated XML answers without reliably doing the math. This is format-compliant but mathematically inert behavior. It is also a regression relative to the original Phase 1 base-model baseline accuracy of 0.5625 on the calibrated single-problem eval. Therefore the next fix should not be "more format SFT" by itself. It should preserve or teach reasoning while keeping the final XML answer interface.
+
 ### Experiment 5.7: Single-Problem XML Fallback Smoke
 
 Run this only if the two-variant XML prompt fails on both 1.5B and 3B.
@@ -850,6 +869,86 @@ Interpretation:
 | Single-problem XML passes, two-variant XML fails | Packing horizon is the main issue | Format SFT should start with one problem, then curriculum to two. |
 | Single-problem XML also fails | General format obedience is the issue | Format SFT is required before any packed RL work. |
 
+### Experiment 5.8: Few-Shot XML Prompt Diagnostic
+
+Goal:
+
+```text
+Check whether the base 1.5B model can follow the XML answer contract from an in-context example, without any adapter.
+```
+
+Prompt mode:
+
+```text
+xml_fewshot
+```
+
+The prompt shows a simple two-problem XML example:
+
+```xml
+<answers>
+<answer_1>3</answer_1>
+<answer_2>4</answer_2>
+</answers>
+```
+
+Then asks the model to solve the real packed pair and return one XML answer block.
+
+No-prefix result:
+
+```text
+Model: Qwen/Qwen2.5-Math-1.5B
+Config: configs/packed_base_eval_stage1_pair_xml_fewshot_256_smoke.yaml
+Dataset: outputs/phase5/packed_stage1_pair_xml_fewshot_calibrated_train.jsonl
+examples: 8
+variant_examples: 16
+accuracy: 0.0000
+family_accuracy: 0.0000
+parse_complete_rate: 0.0000
+answer_count_mismatch_rate: 1.0000
+suspicious_rate: 1.0000
+avg_reward: -0.1000
+```
+
+Observed behavior:
+
+The model generated empty completions. The likely cause is that the prompt demonstration plus XML-oriented instruction made the base model terminate immediately instead of beginning a new answer block.
+
+Response-prefix result:
+
+```text
+Model: Qwen/Qwen2.5-Math-1.5B
+Config: configs/packed_base_eval_stage1_pair_xml_fewshot_prefix_256_smoke.yaml
+Dataset: outputs/phase5/packed_stage1_pair_xml_fewshot_calibrated_train.jsonl
+response_prefix: "<answers>\n"
+examples: 8
+variant_examples: 16
+accuracy: 0.0000
+family_accuracy: 0.0000
+parse_complete_rate: 0.2500
+answer_count_mismatch_rate: 0.7500
+suspicious_rate: 0.8750
+avg_reward: -0.1000
+```
+
+By family type on the response-prefix run:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch rate | Suspicious rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.0000 | 0.0000 | 0.6667 | 0.3333 | 0.6667 |
+| `rational_linear_equation` | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 |
+
+Representative failure modes:
+
+- Copied the demonstration answers `3` and `4`.
+- Emitted malformed UI-like placeholder text inside answer tags for rational-equation rows.
+- Started with XML tags, then drifted into verbose step-by-step prose.
+- Sometimes produced complete XML for missing-average rows, but the numbers were wrong.
+
+Conclusion:
+
+Few-shot prompting does not solve the base 1.5B model's interface problem. A response prefix helps the model begin the XML block, but it does not produce reliable, correct, parse-complete answers. This supports the current SFT-first direction, with one important refinement: the next SFT bridge must include a math-preserving reasoning signal, not only answer-only XML targets.
+
 ## Recommended Immediate Order
 
 1. Implement XML parser and tests. Done.
@@ -863,6 +962,7 @@ Interpretation:
 9. Train tiny LoRA format adapter on `Qwen/Qwen2.5-Math-1.5B`. Done; 20-step smoke completed.
 10. Re-evaluate parse gate. Done; heldout parse_complete_rate is 1.0000 and answer_count_mismatch_rate is 0.0000.
 11. If parse gate passes, resume GRPO implementation. Blocked for now by low answer accuracy and high wrong-collapse diagnostics; do not resume GRPO yet.
+12. Run no-training few-shot XML diagnostic before scaling SFT. Done; no-prefix failed with empty completions, response-prefix improved parse to 0.2500 but accuracy stayed 0.0000.
 
 ## What We Should Ask The Critic
 
@@ -882,14 +982,18 @@ This is real but premature. Phase 5 should stay answer-only unless the critic se
 
 ## Current Recommendation
 
-Continue with XML answer contract plus SFT-first stabilization on `Qwen/Qwen2.5-Math-1.5B`.
+Continue with XML answer contract plus SFT-first stabilization on `Qwen/Qwen2.5-Math-1.5B`, but do not scale answer-only format SFT blindly.
 
-The 20-step LoRA smoke proves the interface can be fixed locally: heldout parse completeness is now 1.0000. However, answer accuracy is still only 0.1250 on full heldout and the model often emits plausible but wrong repeated XML answers. Do not start GRPO yet. The next step should be a stronger supervised bridge:
+The 20-step LoRA smoke proves the interface can be fixed locally: heldout parse completeness is now 1.0000. However, answer accuracy is still only 0.1250 on full heldout and the model often emits plausible but wrong repeated XML answers. The few-shot diagnostic also failed: no-prefix produced empty completions, and response-prefix only reached parse_complete_rate 0.2500 with accuracy 0.0000. Do not start GRPO yet.
 
-1. Increase format SFT from 20 steps to a real short run over the 144-row train split for 1 to 3 epochs.
-2. Add a small heldout-monitored evaluation loop after each run.
-3. Consider adding answer-only reasoning SFT examples only if pure format SFT keeps producing clean but wrong XML.
-4. Keep GRPO blocked until the post-SFT reward smoke has both high parse compliance and a non-degenerate reward distribution.
+The next step should be a reasoning-preserving supervised bridge:
+
+1. Build a synthetic SFT dataset with short deterministic solution traces plus final XML answers for the current two families.
+2. Keep the final answer surface exactly XML, so the reward parser remains unchanged.
+3. Train a small LoRA on mixed targets: some answer-only XML rows to preserve the interface, plus worked rows to preserve or restore math behavior.
+4. Evaluate every candidate adapter on the packed heldout split.
+5. Gate on both sides: `parse_complete_rate >= 0.95`, `answer_count_mismatch_rate <= 0.05`, and accuracy materially above the current 0.1250 post-SFT baseline.
+6. Keep GRPO blocked until the post-SFT reward smoke has both high parse compliance and a non-degenerate reward distribution.
 
 The 3B-Instruct smoke confirms the XML contract is viable, but the model's low math accuracy makes it a poor main RL target for this project.
 

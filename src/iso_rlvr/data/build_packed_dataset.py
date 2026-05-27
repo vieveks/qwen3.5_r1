@@ -10,7 +10,7 @@ from iso_rlvr.io import group_by_family, read_jsonl, write_jsonl
 
 
 VARIANT_SUFFIX_RE = re.compile(r"_v(\d+)$")
-PROMPT_FORMATS = {"answer_lines", "xml"}
+PROMPT_FORMATS = {"answer_lines", "xml", "xml_fewshot"}
 
 
 def variant_sort_key(row: dict[str, Any]) -> tuple[int, str]:
@@ -37,10 +37,25 @@ def build_packed_prompt(rows: list[dict[str, Any]], prompt_format: str = "answer
     problem_lines = "\n\n".join(
         f"Problem {idx}: {row['problem']}" for idx, row in enumerate(rows, start=1)
     )
-    if prompt_format == "xml":
+    if prompt_format in {"xml", "xml_fewshot"}:
         answer_lines = "\n".join(
             f"<answer_{idx}>number</answer_{idx}>" for idx in range(1, len(rows) + 1)
         )
+        if prompt_format == "xml_fewshot":
+            return (
+                "Example:\n"
+                "Problem 1: If 3x = 9, what is x?\n"
+                "Problem 2: If 5x = 20, what is x?\n\n"
+                "<answers>\n"
+                "<answer_1>3</answer_1>\n"
+                "<answer_2>4</answer_2>\n"
+                "</answers>\n\n"
+                "Now solve:\n"
+                f"{problem_lines}\n\n"
+                "Solve each problem silently. Return only the final answers, with no "
+                "reasoning or extra text. Return exactly one XML answer block using "
+                "these tags: <answers>, <answer_1>, and <answer_2>."
+            )
         return (
             f"{problem_lines}\n\n"
             "Solve each problem silently. Return only the final answers, with no "

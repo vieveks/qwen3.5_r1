@@ -52,6 +52,23 @@ def test_pack_family_can_create_xml_prompt_contract():
     assert "Answer 1: <number>" not in packed["prompt"]
 
 
+def test_pack_family_can_create_xml_fewshot_prompt_contract():
+    rows = [_row("fam_000001", 0), _row("fam_000001", 1)]
+
+    packed = pack_family(rows, prompt_format="xml_fewshot")
+
+    assert packed["prompt_format"] == "xml_fewshot"
+    assert packed["prompt"].startswith("Example:")
+    assert "<answer_1>3</answer_1>" in packed["prompt"]
+    assert "<answer_2>4</answer_2>" in packed["prompt"]
+    assert "Now solve:" in packed["prompt"]
+    assert "Problem 1: Problem text 0?" in packed["prompt"]
+    assert "Return exactly one XML answer block" in packed["prompt"]
+    assert "<answer_1>" in packed["prompt"]
+    assert "<answer_2>" in packed["prompt"]
+    assert "<answer_1>number</answer_1>" not in packed["prompt"]
+
+
 def test_build_packed_prompt_rejects_unknown_prompt_format():
     rows = [_row("fam_000001", 0)]
 
