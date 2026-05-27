@@ -14,7 +14,11 @@ INDEXED_PATTERNS = [
         re.IGNORECASE,
     ),
     re.compile(
-        rf"\bProblem\s+(\d+)\s*(?::|=|\bis\b)\s*(?:\\boxed\{{)?({VALUE_PATTERN})",
+        rf"\bProblem\s+(\d+)\s+(?:final\s+)?answer\s*(?::|=|\bis\b)\s*(?:\\boxed\{{)?({VALUE_PATTERN})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\bProblem\s+(\d+)\s*:\s*(?:final\s+)?answer\s*(?::|=|\bis\b)?\s*(?:\\boxed\{{)?({VALUE_PATTERN})",
         re.IGNORECASE,
     ),
     re.compile(rf"(?m)^\s*(\d+)\s*[\).:-]\s*(?:\\boxed\{{)?({VALUE_PATTERN})"),

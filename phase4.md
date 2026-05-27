@@ -557,18 +557,130 @@ Conclusion:
 
 The current best prompt remains the two-variant tail-format prompt without a response prefix. That setup is imperfect but at least produces nonzero parse completeness and family-level correctness. The prefix experiment is useful as a negative result: it shows that we should not rely on a naive forced answer prefix to make Qwen2.5-Math-1.5B base obey the packed answer format.
 
+### Parser Correction: Problem Statement False Positives
+
+While inspecting the instruct-model outputs, we found a parser bug in the fallback indexed-answer path. The parser could treat a problem statement such as:
+
+```text
+Problem 1: Solve for x: -6x + 22/3 = -2/3.
+```
+
+as if the answer to `Problem 1` were `-6`. This is not acceptable for RL reward use because it can turn ordinary reasoning text into a parse-complete answer set.
+
+The parser was tightened so `Problem N` forms are accepted only when they explicitly look like answer declarations, for example:
+
+```text
+Problem 1 final answer: 3
+Problem 2 answer: 7
+```
+
+The accepted packed answer surfaces are now:
+
+- Canonical `Answer N: <value>` lines.
+- Explicit `Problem N answer: <value>` or `Problem N final answer: <value>` lines.
+- Numbered answer-only lines such as `1) <value>`.
+- Boxed values, including boxed values inside explicit problem sections.
+
+A regression test was added to ensure ordinary problem statements are not parsed as answers.
+
+### Smoke 6: Base Tail Format Rerun With Strict Parser
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.run_packed_eval --config configs/packed_base_eval_stage1_pair_tail_format_256_strict_parser_smoke.yaml
+```
+
+Result:
+
+```text
+examples: 8
+variant_examples: 16
+accuracy: 0.2500
+family_accuracy: 0.1250
+parse_complete_rate: 0.3750
+answer_count_mismatch_rate: 0.6250
+suspicious_rate: 0.7500
+avg_reward: 0.2498
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch rate | Suspicious rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.5000 | 0.3333 | 0.6667 | 0.3333 | 0.6667 |
+| `rational_linear_equation` | 0.1000 | 0.0000 | 0.2000 | 0.8000 | 0.8000 |
+
+Conclusion:
+
+The stricter parser did not change the best base-model tail-format result. That means Smoke 4's nonzero parse completeness was not caused by the `Problem N: Solve...` false-positive path. The base model is still the strongest observed setup so far, but it is far below the parse-completeness threshold needed for GRPO.
+
+### Smoke 7: Instruct Chat Template Tail Format, Strict Parser
+
+The evaluator now supports `apply_chat_template: true`. When enabled, the packed prompt is wrapped through the tokenizer chat template with an optional `system_prompt`, and generation begins from the model's assistant turn. The result row records both the original dataset prompt and the rendered `generation_prompt`.
+
+Config:
+
+```yaml
+model_name: Qwen/Qwen2.5-Math-1.5B-Instruct
+dataset_path: outputs/phase4/packed_stage1_pair_calibrated_train.jsonl
+output_path: outputs/phase4/packed_instruct_stage1_pair_tail_format_256_strict_parser_smoke.jsonl
+max_examples: 8
+max_new_tokens: 256
+temperature: 0.0
+top_p: 1.0
+device: auto
+resume: false
+apply_chat_template: true
+system_prompt: "Solve the math problems. Return only the requested final answer lines with no reasoning or extra text."
+```
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.run_packed_eval --config configs/packed_instruct_eval_stage1_pair_tail_format_256_smoke.yaml
+```
+
+Result:
+
+```text
+examples: 8
+variant_examples: 16
+accuracy: 0.0000
+family_accuracy: 0.0000
+parse_complete_rate: 0.0000
+answer_count_mismatch_rate: 1.0000
+suspicious_rate: 1.0000
+avg_reward: -0.1500
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch rate | Suspicious rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 |
+| `rational_linear_equation` | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 |
+
+Observed behavior:
+
+The instruct model ignored the no-reasoning instruction and began responses with long step-by-step solutions such as `Let's solve each problem step-by-step using Python and SymPy.` It often computed at least the first answer correctly in the reasoning trace, but did not emit the requested `Answer 1:` / `Answer 2:` final lines within the 256-token budget. Under the strict parser, these reasoning traces are correctly marked incomplete instead of being partially credited as formatted answers.
+
+Conclusion:
+
+The simple chat-template conversion is not enough. This model family appears strongly biased toward verbose worked solutions on these prompts, even in deterministic decoding. For Phase 4, the practical bottleneck is format control, not mathematical ability.
+
 Current decision:
 
 ```text
 Do not start GRPO trainer work yet.
-First tighten the packed prompt / decoding setup until parse_complete_rate is high on a tiny deterministic base smoke.
+First solve packed format compliance. Reward training on a parser-complete rate near zero would mostly optimize formatting accidents and length artifacts.
 ```
 
 Recommended next experiment:
 
 ```text
-Use two-variant tail-format packed prompts.
-Try an instruct/chat model with the same packed eval harness, or add a small supervised format warmup before RL.
+Keep two-variant tail-format packed prompts as the working prompt family.
+Run a tiny supervised format warmup/SFT stage, or test a model with stronger instruction-following format control.
 Require parse_complete_rate >= 0.90 on a tiny smoke before any RL run.
 ```
 
@@ -581,5 +693,5 @@ conda run -n pytorch_5070ti python -m pytest tests
 Result:
 
 ```text
-49 passed
+52 passed
 ```

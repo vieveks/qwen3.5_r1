@@ -14,6 +14,33 @@ from iso_rlvr.modeling import count_completion_tokens, load_causal_lm
 from iso_rlvr.rewards.packed_iso import score_packed_completion
 
 
+def build_generation_prompt(tokenizer: Any, row_prompt: str, cfg: dict[str, Any]) -> str:
+    response_prefix = str(cfg.get("response_prefix", ""))
+    if not bool(cfg.get("apply_chat_template", False)):
+        return row_prompt + response_prefix
+
+    if not hasattr(tokenizer, "apply_chat_template"):
+        raise ValueError("apply_chat_template=true requires a tokenizer with chat template support")
+
+    messages = []
+    system_prompt = cfg.get("system_prompt")
+    if system_prompt:
+        messages.append({"role": "system", "content": str(system_prompt)})
+    messages.append({"role": "user", "content": row_prompt})
+
+    try:
+        rendered_prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+    except Exception as exc:
+        raise ValueError(
+            "apply_chat_template=true failed; check that the model tokenizer defines a chat_template"
+        ) from exc
+    return rendered_prompt + response_prefix
+
+
 def summarize_packed_eval_rows(
     rows: list[dict[str, Any]],
     include_by_family_type: bool = True,
@@ -82,7 +109,7 @@ def run_packed_eval(config_path: Path) -> None:
             if row["family_id"] in completed:
                 continue
             response_prefix = str(cfg.get("response_prefix", ""))
-            prompt = row["prompt"] + response_prefix
+            prompt = build_generation_prompt(tokenizer, row["prompt"], cfg)
             response = generate_one(model, tokenizer, prompt, cfg)
             response_tokens = count_completion_tokens(tokenizer, prompt, response)
             parsed_response = response_prefix + response
@@ -94,7 +121,9 @@ def run_packed_eval(config_path: Path) -> None:
             diagnostics = diagnose_packed_parse(scored.parse, row["gold_answers"])
             result = {
                 **row,
+                "apply_chat_template": bool(cfg.get("apply_chat_template", False)),
                 "response_prefix": response_prefix,
+                "generation_prompt": prompt,
                 "model_response": response,
                 "parsed_response": parsed_response,
                 "parsed_answers": scored.parse.answers,

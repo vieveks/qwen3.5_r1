@@ -70,14 +70,27 @@ def test_parse_fallback_numbered_lines():
 def test_parse_fallback_problem_lines():
     parsed = parse_packed_answers(
         """
-        Problem 1: 3
-        Problem 2: 7
+        Problem 1 final answer: 3
+        Problem 2 answer: 7
         """,
         expected_count=2,
     )
 
     assert parsed.answers == ["3", "7"]
     assert parsed.complete
+
+
+def test_parse_does_not_treat_problem_statement_as_answer():
+    parsed = parse_packed_answers(
+        """
+        Problem 1: Solve for x: -6x + 22/3 = -2/3.
+        Problem 2: Solve for x: -8x + 16/5 = -112/15.
+        """,
+        expected_count=2,
+    )
+
+    assert parsed.answers == [None, None]
+    assert not parsed.complete
 
 
 def test_parse_boxed_answers_in_order():

@@ -1,4 +1,4 @@
-from iso_rlvr.eval.run_packed_eval import summarize_packed_eval_rows
+from iso_rlvr.eval.run_packed_eval import build_generation_prompt, summarize_packed_eval_rows
 from iso_rlvr.rewards.packed_iso import score_packed_completion
 
 
@@ -70,3 +70,43 @@ def test_response_prefix_can_be_combined_with_generated_suffix_for_scoring():
     assert scored.parse.answers == ["3", "7"]
     assert scored.parse.complete
     assert scored.reward == 1.55
+
+
+class _ChatTokenizer:
+    def __init__(self):
+        self.messages = None
+
+    def apply_chat_template(self, messages, tokenize, add_generation_prompt):
+        self.messages = messages
+        assert tokenize is False
+        assert add_generation_prompt is True
+        return "<chat>" + messages[-1]["content"] + "<assistant>"
+
+
+def test_build_generation_prompt_can_render_chat_template_with_system_prompt():
+    tokenizer = _ChatTokenizer()
+    prompt = build_generation_prompt(
+        tokenizer,
+        "Problem 1: 1 + 2\n\nAnswer 1: <number>",
+        {
+            "apply_chat_template": True,
+            "system_prompt": "Return only final answers.",
+            "response_prefix": "\nAnswer 1:",
+        },
+    )
+
+    assert tokenizer.messages == [
+        {"role": "system", "content": "Return only final answers."},
+        {"role": "user", "content": "Problem 1: 1 + 2\n\nAnswer 1: <number>"},
+    ]
+    assert prompt.endswith("<assistant>\nAnswer 1:")
+
+
+def test_build_generation_prompt_defaults_to_plain_prompt():
+    prompt = build_generation_prompt(
+        object(),
+        "Problem 1: 1 + 2",
+        {"response_prefix": "\nAnswer 1:"},
+    )
+
+    assert prompt == "Problem 1: 1 + 2\nAnswer 1:"

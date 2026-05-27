@@ -1,0 +1,9 @@
+model_name: Qwen/Qwen2.5-Math-1.5B
+dataset_path: outputs/phase4/packed_stage1_pair_calibrated_train.jsonl
+output_path: outputs/phase4/packed_base_stage1_pair_tail_format_256_strict_parser_smoke.jsonl
+max_examples: 8
+max_new_tokens: 256
+temperature: 0.0
+top_p: 1.0
+device: auto
+resume: false
