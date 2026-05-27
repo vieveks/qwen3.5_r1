@@ -949,6 +949,107 @@ Conclusion:
 
 Few-shot prompting does not solve the base 1.5B model's interface problem. A response prefix helps the model begin the XML block, but it does not produce reliable, correct, parse-complete answers. This supports the current SFT-first direction, with one important refinement: the next SFT bridge must include a math-preserving reasoning signal, not only answer-only XML targets.
 
+### Experiment 5.9: One-Epoch Answer-Only SFT Control
+
+Goal:
+
+```text
+Check whether the 20-step answer-only XML adapter was simply undertrained before investing in reasoning-trace generation.
+```
+
+Rationale:
+
+The critic raised a useful control: before declaring answer-only XML SFT a dead end, run one full pass over the existing 144-row train split. If accuracy recovers substantially, then the 20-step adapter was mostly undertrained. If accuracy remains low, then answer-only SFT is the wrong bridge by itself.
+
+Training config:
+
+```text
+Config: configs/format_sft_qwen25_math_1_5b_xml_1epoch.yaml
+Base model: Qwen/Qwen2.5-Math-1.5B
+Dataset: outputs/phase5/format_sft_pair_xml_train.jsonl
+Rows: 144
+Epochs: 1
+Max steps: 72
+Batch size: 2
+Learning rate: 2e-4
+Max sequence length: 768
+LoRA rank: 8
+LoRA alpha: 16
+LoRA dropout: 0.05
+Adapter output: outputs/phase5/format_sft_qwen25_math_1_5b_xml_1epoch/adapter_or_model
+```
+
+Final logged training losses:
+
+| Step | Loss |
+| ---: | ---: |
+| 67 | 0.1136 |
+| 68 | 0.0804 |
+| 69 | 0.1142 |
+| 70 | 0.0569 |
+| 71 | 0.1124 |
+
+Full heldout result:
+
+```text
+Model: Qwen/Qwen2.5-Math-1.5B
+Adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_1epoch/adapter_or_model
+Config: configs/packed_base_eval_stage1_pair_xml_256_after_sft_1epoch_heldout_full.yaml
+Dataset: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+examples: 16
+variant_examples: 32
+accuracy: 0.3125
+family_accuracy: 0.3125
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.6875
+avg_reward: 0.5146
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch rate | Suspicious rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 1.0000 |
+| `rational_linear_equation` | 0.5000 | 0.5000 | 1.0000 | 0.0000 | 0.5000 |
+
+Comparison:
+
+| Adapter / baseline | Eval surface | Accuracy | Parse complete | Suspicious rate |
+| --- | --- | ---: | ---: | ---: |
+| 20-step answer-only XML SFT | packed heldout XML | 0.1250 | 1.0000 | 0.8750 |
+| 1-epoch answer-only XML SFT | packed heldout XML | 0.3125 | 1.0000 | 0.6875 |
+| Phase 1 base baseline | calibrated single-problem eval | 0.5625 | n/a | n/a |
+
+Representative behavior:
+
+```text
+Family: missing_average
+Gold: ["32", "32"]
+Parsed: ["29", "29"]
+```
+
+The first prompt in that row says the known numbers plus one unknown have average `29`. The adapter answered with the average itself instead of computing the missing value. This is a clean XML output, but it is not the right math.
+
+```text
+Family: rational_linear_equation
+Gold: ["11/5", "11/5"]
+Parsed: ["11/5", "11/5"]
+```
+
+The rational-linear family improved materially under the one-epoch adapter, showing that answer-only SFT is not completely useless. It can preserve the XML interface and recover some task accuracy when trained longer than 20 steps.
+
+Conclusion:
+
+The 20-step answer-only adapter was partly undertrained, but answer-only XML SFT is still insufficient as the main bridge. It raised heldout accuracy from `0.1250` to `0.3125` while keeping parse completeness at `1.0000`, but it did not recover the original math capability and completely failed the `missing_average` family.
+
+This result changes the recommendation slightly:
+
+- Do not discard answer-only XML rows. They are useful for preserving the answer interface.
+- Do not scale answer-only XML SFT alone. It teaches clean XML faster than it teaches the computations.
+- Build the next bridge as mixed SFT: majority short deterministic reasoning traces plus final XML, minority answer-only XML rows.
+- Give special attention to `missing_average`, where the current adapter learned a shortcut of returning the target average instead of solving for the missing number.
+
 ## Recommended Immediate Order
 
 1. Implement XML parser and tests. Done.
@@ -963,6 +1064,8 @@ Few-shot prompting does not solve the base 1.5B model's interface problem. A res
 10. Re-evaluate parse gate. Done; heldout parse_complete_rate is 1.0000 and answer_count_mismatch_rate is 0.0000.
 11. If parse gate passes, resume GRPO implementation. Blocked for now by low answer accuracy and high wrong-collapse diagnostics; do not resume GRPO yet.
 12. Run no-training few-shot XML diagnostic before scaling SFT. Done; no-prefix failed with empty completions, response-prefix improved parse to 0.2500 but accuracy stayed 0.0000.
+13. Run one full epoch of answer-only XML SFT as an undertraining control. Done; accuracy improved to 0.3125 but missing-average stayed at 0.0000, so answer-only SFT remains insufficient.
+14. Build a reasoning-preserving SFT dataset with short deterministic traces and final XML answers. Next.
 
 ## What We Should Ask The Critic
 
@@ -984,15 +1087,17 @@ This is real but premature. Phase 5 should stay answer-only unless the critic se
 
 Continue with XML answer contract plus SFT-first stabilization on `Qwen/Qwen2.5-Math-1.5B`, but do not scale answer-only format SFT blindly.
 
-The 20-step LoRA smoke proves the interface can be fixed locally: heldout parse completeness is now 1.0000. However, answer accuracy is still only 0.1250 on full heldout and the model often emits plausible but wrong repeated XML answers. The few-shot diagnostic also failed: no-prefix produced empty completions, and response-prefix only reached parse_complete_rate 0.2500 with accuracy 0.0000. Do not start GRPO yet.
+The 20-step LoRA smoke proves the interface can be fixed locally: heldout parse completeness is now 1.0000. However, answer accuracy was only 0.1250 on full heldout and the model often emitted plausible but wrong repeated XML answers. The few-shot diagnostic also failed: no-prefix produced empty completions, and response-prefix only reached parse_complete_rate 0.2500 with accuracy 0.0000.
+
+The one-epoch answer-only control improved accuracy to 0.3125 while preserving perfect parse completeness, so the 20-step run was partly undertrained. But the family split is decisive: `rational_linear_equation` reached 0.5000 accuracy, while `missing_average` stayed at 0.0000. The model is still learning format and shallow answer patterns more reliably than the underlying computations. Do not start GRPO yet.
 
 The next step should be a reasoning-preserving supervised bridge:
 
-1. Build a synthetic SFT dataset with short deterministic solution traces plus final XML answers for the current two families.
+1. Build a synthetic SFT dataset with short deterministic solution traces plus final XML answers for the current two families, with extra focus on `missing_average`.
 2. Keep the final answer surface exactly XML, so the reward parser remains unchanged.
-3. Train a small LoRA on mixed targets: some answer-only XML rows to preserve the interface, plus worked rows to preserve or restore math behavior.
+3. Train a small LoRA on mixed targets: mostly worked rows to preserve or restore math behavior, plus answer-only XML rows to preserve the interface.
 4. Evaluate every candidate adapter on the packed heldout split.
-5. Gate on both sides: `parse_complete_rate >= 0.95`, `answer_count_mismatch_rate <= 0.05`, and accuracy materially above the current 0.1250 post-SFT baseline.
+5. Gate on both sides: `parse_complete_rate >= 0.95`, `answer_count_mismatch_rate <= 0.05`, and accuracy materially above the current 0.3125 one-epoch answer-only baseline.
 6. Keep GRPO blocked until the post-SFT reward smoke has both high parse compliance and a non-degenerate reward distribution.
 
 The 3B-Instruct smoke confirms the XML contract is viable, but the model's low math accuracy makes it a poor main RL target for this project.
