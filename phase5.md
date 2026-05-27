@@ -1407,6 +1407,101 @@ Failure: XML was complete, but the generated isolation arithmetic was wrong.
 
 This is still the best GRPO-smoke starting point so far because the verifier interface is now stable and the reward distribution is non-degenerate. Mixed-v1 remains the best pure accuracy reference, but it still has a malformed-output tail. For RL, the all-traces adapter is the cleaner policy initialization.
 
+### Experiment 5.14: Sampled Rollout Audit Before GRPO
+
+Goal:
+
+```text
+Check whether the all-traces adapter keeps the XML interface stable under sampled rollouts before doing any RL update.
+```
+
+Rationale:
+
+Greedy heldout eval reached `parse_complete_rate: 1.0000`, but GRPO uses sampled completions. Before training, we need to confirm:
+
+- sampled parse completeness remains high
+- reward variance is non-degenerate
+- at least one prompt has both correct and incorrect sampled completions
+- malformed outputs, if any, are logged in full
+
+Audit implementation:
+
+```text
+Command: src/iso_rlvr/eval/run_packed_rollout_audit.py
+Config: configs/packed_rollout_audit_all_traces_heldout_sampled.yaml
+Adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+Dataset: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+Output: outputs/phase5/packed_rollout_audit_all_traces_heldout_sampled.jsonl
+Samples per prompt: 4
+Temperature: 0.7
+Top-p: 1.0
+Max new tokens: 256
+Reward: packed correctness plus format signal only; family bonus disabled
+```
+
+Gate:
+
+```text
+sampled parse_complete_rate >= 0.85
+reward_std > 0.05
+at least one prompt has both correct and incorrect sampled completions
+```
+
+Result:
+
+```text
+prompts: 16
+samples: 64
+variant_examples: 128
+accuracy: 0.7188
+family_accuracy: 0.6094
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+reward_mean: 0.7612
+reward_std: 0.3943
+reward_min: 0.0213
+reward_max: 1.0500
+contrast_prompt_count: 3
+passes_audit_gate: true
+malformed_samples: 0
+```
+
+Reward histogram:
+
+| Reward bucket | Count |
+| --- | ---: |
+| `[0.00,0.25)` | 11 |
+| `[0.50,0.75)` | 14 |
+| `[1.00,1.25)` | 39 |
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch rate | Suspicious rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.9583 | 0.9167 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_linear_equation` | 0.5750 | 0.4250 | 1.0000 | 0.0000 | 0.0000 |
+
+Conclusion:
+
+The all-traces adapter passed the no-training rollout audit. Sampling at temperature `0.7` did not destabilize the XML interface:
+
+```text
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+malformed_samples: 0
+```
+
+The reward distribution is also suitable for a tiny GRPO smoke:
+
+```text
+reward_std: 0.3943
+contrast_prompt_count: 3
+```
+
+The contrast condition matters. It means at least three prompts have both correct and incorrect sampled completions, so prompt-level GRPO has a real within-group learning signal. Phase 5 can now proceed to a tiny packed GRPO smoke. The smoke should still use pure correctness plus format reward first; defer the isomorphic family bonus to Phase 6 or a later controlled comparison.
+
 ## Recommended Immediate Order
 
 1. Implement XML parser and tests. Done.
@@ -1427,7 +1522,8 @@ This is still the best GRPO-smoke starting point so far because the verifier int
 16. Run interface diagnostics on the mixed adapter. Done; response prefix hurts accuracy, longer decode does not fix the malformed algebra row.
 17. Build a mixed-v2 bridge that keeps missing-average traces but increases answer-only pressure, especially for rational-linear rows. Done; worse than mixed-v1.
 18. Add deterministic rational-linear traces or another targeted loop control. Done; all-traces fixed parse completeness but reduced rational-linear accuracy.
-19. Run a tiny GRPO smoke from the all-traces adapter. Next.
+19. Run sampled rollout audit from the all-traces adapter before training. Done; passed the audit gate.
+20. Run a tiny GRPO smoke from the all-traces adapter. Next.
 
 ## What We Should Ask The Critic
 
@@ -1473,12 +1569,23 @@ This passes the Phase 5 interface gate and has a usable reward distribution. It 
 outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
 ```
 
-Run only a tiny GRPO smoke first, not full training. The smoke should verify that:
+The sampled rollout audit confirmed that this adapter remains stable under temperature `0.7` sampling:
 
-1. The reward function gives zero correctness credit unless parse is complete.
-2. Parse completeness remains high during sampled generation, not only greedy heldout eval.
-3. Reward variance is non-degenerate within GRPO groups.
-4. Rational-linear arithmetic errors can receive useful negative contrast without destabilizing the XML interface.
+```text
+samples: 64
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+reward_std: 0.3943
+contrast_prompt_count: 3
+```
+
+Run only a tiny GRPO smoke first, not full training. The smoke should use pure correctness plus format reward, with family bonus disabled. It should verify that:
+
+1. Parse completeness remains high after a few RL updates.
+2. Reward variance remains non-degenerate within prompt groups.
+3. Rational-linear arithmetic improves or at least does not collapse.
+4. The XML interface does not regress under sampled training.
 
 The 3B-Instruct smoke confirms the XML contract is viable, but the model's low math accuracy makes it a poor main RL target for this project.
 
