@@ -498,6 +498,65 @@ Conclusion:
 
 Putting the answer format at the end is the first usable packed prompt direction, but it is still not ready for RL. The base model often emits reasoning despite the instruction, then eventually emits answer lines. Parse completeness is nonzero but too low for stable reward training, especially on `rational_linear_equation`.
 
+### Smoke 5: Two Variants, Tail Format Plus Response Prefix, 128 Tokens
+
+This smoke tested whether forcing the generation to begin immediately after `Answer 1:` would reduce reasoning and make the parser complete more often. The evaluator now supports an optional `response_prefix` field in the config. The prefix is appended to the prompt before generation, then prepended back to the generated suffix before parsing and reward scoring.
+
+Config:
+
+```yaml
+model_name: Qwen/Qwen2.5-Math-1.5B
+dataset_path: outputs/phase4/packed_stage1_pair_calibrated_train.jsonl
+output_path: outputs/phase4/packed_base_stage1_pair_tail_prefix_128_smoke.jsonl
+max_examples: 8
+max_new_tokens: 128
+temperature: 0.0
+top_p: 1.0
+device: auto
+resume: true
+response_prefix: "\nAnswer 1:"
+```
+
+Command:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.eval.run_packed_eval --config configs/packed_base_eval_stage1_pair_tail_prefix_128_smoke.yaml
+```
+
+Result:
+
+```text
+examples: 8
+variant_examples: 16
+accuracy: 0.0000
+family_accuracy: 0.0000
+parse_complete_rate: 0.0000
+answer_count_mismatch_rate: 1.0000
+suspicious_rate: 1.0000
+avg_reward: -0.1250
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch rate | Suspicious rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 |
+| `rational_linear_equation` | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 |
+
+Observed behavior:
+
+The prefix made generations shorter, but the model treated `Answer 1:` as a heading and continued with reasoning prose instead of a numeric answer. A typical parsed response began with:
+
+```text
+Answer 1: To find the unknown number, we first calculate...
+```
+
+The parser correctly rejected these outputs because the content after `Answer 1:` was not a clean numeric answer. This makes the simple response-prefix strategy unusable for this base model.
+
+Conclusion:
+
+The current best prompt remains the two-variant tail-format prompt without a response prefix. That setup is imperfect but at least produces nonzero parse completeness and family-level correctness. The prefix experiment is useful as a negative result: it shows that we should not rely on a naive forced answer prefix to make Qwen2.5-Math-1.5B base obey the packed answer format.
+
 Current decision:
 
 ```text
@@ -509,7 +568,7 @@ Recommended next experiment:
 
 ```text
 Use two-variant tail-format packed prompts.
-Try an instruct/chat model or a stronger response-prefix strategy.
+Try an instruct/chat model with the same packed eval harness, or add a small supervised format warmup before RL.
 Require parse_complete_rate >= 0.90 on a tiny smoke before any RL run.
 ```
 
@@ -522,5 +581,5 @@ conda run -n pytorch_5070ti python -m pytest tests
 Result:
 
 ```text
-48 passed
+49 passed
 ```

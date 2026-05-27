@@ -1,4 +1,5 @@
 from iso_rlvr.eval.run_packed_eval import summarize_packed_eval_rows
+from iso_rlvr.rewards.packed_iso import score_packed_completion
 
 
 def _row(
@@ -58,3 +59,14 @@ def test_summarize_packed_eval_rows_handles_empty_input():
 
     assert summary["examples"] == 0
     assert summary["by_family_type"] == {}
+
+
+def test_response_prefix_can_be_combined_with_generated_suffix_for_scoring():
+    response_prefix = "\nAnswer 1:"
+    generated_suffix = " 3\nAnswer 2: 7"
+
+    scored = score_packed_completion(response_prefix + generated_suffix, ["3", "7"])
+
+    assert scored.parse.answers == ["3", "7"]
+    assert scored.parse.complete
+    assert scored.reward == 1.55

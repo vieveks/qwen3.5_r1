@@ -81,18 +81,22 @@ def run_packed_eval(config_path: Path) -> None:
         for row in tqdm(rows, desc="packed-eval"):
             if row["family_id"] in completed:
                 continue
-            prompt = row["prompt"]
+            response_prefix = str(cfg.get("response_prefix", ""))
+            prompt = row["prompt"] + response_prefix
             response = generate_one(model, tokenizer, prompt, cfg)
             response_tokens = count_completion_tokens(tokenizer, prompt, response)
+            parsed_response = response_prefix + response
             scored = score_packed_completion(
-                response,
+                parsed_response,
                 row["gold_answers"],
                 response_tokens=response_tokens,
             )
             diagnostics = diagnose_packed_parse(scored.parse, row["gold_answers"])
             result = {
                 **row,
+                "response_prefix": response_prefix,
                 "model_response": response,
+                "parsed_response": parsed_response,
                 "parsed_answers": scored.parse.answers,
                 "missing_indices": scored.parse.missing_indices,
                 "extra_answers": scored.parse.extra_answers,
