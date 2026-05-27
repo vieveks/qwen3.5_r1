@@ -1,5 +1,6 @@
 from iso_rlvr.data.build_format_sft_dataset import (
     build_missing_average_trace,
+    build_rational_linear_trace,
     build_format_sft_dataset,
     build_sft_row,
     build_sft_rows,
@@ -31,6 +32,22 @@ def _missing_average_row(family_id: str = "fam_000001") -> dict:
         "metadata": [
             {"known": "56,29,13,15", "final_average": "29", "missing": 32},
             {"known": "30,62,10,21,75,60,64", "final_average": "177/4", "missing": 32},
+        ],
+        "prompt_format": "xml",
+        "prompt": "Problem 1: ...\n\nProblem 2: ...",
+    }
+
+
+def _rational_linear_row(family_id: str = "fam_000020") -> dict:
+    return {
+        "family_id": family_id,
+        "family_type": "rational_linear_equation",
+        "variant_ids": [f"{family_id}_v0", f"{family_id}_v1"],
+        "num_variants": 2,
+        "gold_answers": ["8/5", "8/5"],
+        "metadata": [
+            {"a": -5, "b": "-13/4", "c": "-45/4", "solution": "8/5"},
+            {"a": 4, "b": "1/3", "c": "101/15", "solution": "8/5"},
         ],
         "prompt_format": "xml",
         "prompt": "Problem 1: ...\n\nProblem 2: ...",
@@ -93,7 +110,31 @@ def test_build_sft_row_can_add_missing_average_trace_before_xml():
     )
 
 
-def test_build_sft_row_keeps_algebra_answer_only_when_trace_mode_is_enabled():
+def test_build_rational_linear_trace_uses_prompt_metadata_values():
+    trace = build_rational_linear_trace(_rational_linear_row())
+
+    assert trace == (
+        "Problem 1 isolate: -5x = -45/4 - (-13/4) = -8\n"
+        "Problem 1 divide: x = -8 / -5 = 8/5\n\n"
+        "Problem 2 isolate: 4x = 101/15 - (1/3) = 32/5\n"
+        "Problem 2 divide: x = 32/5 / 4 = 8/5"
+    )
+
+
+def test_build_sft_row_can_add_rational_linear_trace_before_xml():
+    row = build_sft_row(_rational_linear_row(), rational_linear_traces=True)
+
+    assert row["target_style"] == "rational_linear_trace_xml"
+    assert row["completion"].startswith("Problem 1 isolate: -5x = -45/4 - (-13/4) = -8")
+    assert row["completion"].endswith(
+        "<answers>\n"
+        "<answer_1>8/5</answer_1>\n"
+        "<answer_2>8/5</answer_2>\n"
+        "</answers>"
+    )
+
+
+def test_build_sft_row_keeps_algebra_answer_only_when_missing_trace_mode_is_enabled():
     row = build_sft_row(_packed_row("fam_000002"), missing_average_traces=True)
 
     assert row["target_style"] == "answer_only_xml"
@@ -188,4 +229,25 @@ def test_build_format_sft_dataset_can_duplicate_traced_rows(tmp_path):
         "answer_only_xml",
         "missing_average_trace_xml",
         "answer_only_xml",
+    ]
+
+
+def test_build_format_sft_dataset_can_trace_both_target_families(tmp_path):
+    input_path = tmp_path / "packed.jsonl"
+    train_out = tmp_path / "sft_train.jsonl"
+    rows = [_missing_average_row("fam_000001"), _rational_linear_row("fam_000020")]
+    write_jsonl(input_path, rows)
+
+    build_format_sft_dataset(
+        input_path,
+        train_out,
+        heldout_fraction=0.0,
+        missing_average_traces=True,
+        rational_linear_traces=True,
+    )
+
+    sft_rows = read_jsonl(train_out)
+    assert [row["target_style"] for row in sft_rows] == [
+        "missing_average_trace_xml",
+        "rational_linear_trace_xml",
     ]

@@ -65,9 +65,47 @@ def build_missing_average_trace(row: dict[str, Any]) -> str:
     return "\n\n".join(traces)
 
 
+def build_rational_linear_trace(row: dict[str, Any]) -> str:
+    traces = []
+    metadata_rows = row.get("metadata", [])
+    gold_answers = [str(answer) for answer in row["gold_answers"]]
+    if len(metadata_rows) != len(gold_answers):
+        raise ValueError("rational_linear_equation metadata must match gold_answers length.")
+
+    for idx, (metadata, gold_answer) in enumerate(
+        zip(metadata_rows, gold_answers),
+        start=1,
+    ):
+        a_text = str(metadata["a"])
+        b_text = str(metadata["b"])
+        c_text = str(metadata["c"])
+        a = Fraction(a_text)
+        b = Fraction(b_text)
+        c = Fraction(c_text)
+        isolated = c - b
+        solution = isolated / a
+        if _format_fraction(solution) != gold_answer:
+            raise ValueError(
+                "rational_linear_equation trace does not match gold answer: "
+                f"{_format_fraction(solution)} != {gold_answer}"
+            )
+
+        traces.append(
+            "\n".join(
+                [
+                    f"Problem {idx} isolate: {a_text}x = {c_text} - ({b_text}) = {_format_fraction(isolated)}",
+                    f"Problem {idx} divide: x = {_format_fraction(isolated)} / {a_text} = {gold_answer}",
+                ]
+            )
+        )
+
+    return "\n\n".join(traces)
+
+
 def build_sft_row(
     row: dict[str, Any],
     missing_average_traces: bool = False,
+    rational_linear_traces: bool = False,
     force_answer_only: bool = False,
 ) -> dict[str, Any]:
     gold_answers = [str(answer) for answer in row["gold_answers"]]
@@ -79,6 +117,13 @@ def build_sft_row(
     ):
         completion = f"{build_missing_average_trace(row)}\n\n{xml_completion}"
         target_style = "missing_average_trace_xml"
+    elif (
+        rational_linear_traces
+        and row["family_type"] == "rational_linear_equation"
+        and not force_answer_only
+    ):
+        completion = f"{build_rational_linear_trace(row)}\n\n{xml_completion}"
+        target_style = "rational_linear_trace_xml"
     else:
         completion = xml_completion
         target_style = "answer_only_xml"
@@ -101,6 +146,7 @@ def build_sft_row(
 def build_sft_rows(
     row: dict[str, Any],
     missing_average_traces: bool = False,
+    rational_linear_traces: bool = False,
     include_answer_only_copy: bool = False,
 ) -> list[dict[str, Any]]:
     if (
@@ -110,9 +156,19 @@ def build_sft_rows(
     ):
         return [
             build_sft_row(row, missing_average_traces=False),
-            build_sft_row(row, missing_average_traces=True),
+            build_sft_row(
+                row,
+                missing_average_traces=True,
+                rational_linear_traces=rational_linear_traces,
+            ),
         ]
-    return [build_sft_row(row, missing_average_traces=missing_average_traces)]
+    return [
+        build_sft_row(
+            row,
+            missing_average_traces=missing_average_traces,
+            rational_linear_traces=rational_linear_traces,
+        )
+    ]
 
 
 def split_by_family_id(
@@ -145,6 +201,7 @@ def build_format_sft_dataset(
     seed: int = 0,
     max_examples: int | None = None,
     missing_average_traces: bool = False,
+    rational_linear_traces: bool = False,
     include_answer_only_copy: bool = False,
 ) -> None:
     rows = read_jsonl(input_path)
@@ -162,6 +219,7 @@ def build_format_sft_dataset(
         for sft_row in build_sft_rows(
             row,
             missing_average_traces=missing_average_traces,
+            rational_linear_traces=rational_linear_traces,
             include_answer_only_copy=include_answer_only_copy,
         )
     ]
@@ -171,6 +229,7 @@ def build_format_sft_dataset(
         for sft_row in build_sft_rows(
             row,
             missing_average_traces=missing_average_traces,
+            rational_linear_traces=rational_linear_traces,
             include_answer_only_copy=include_answer_only_copy,
         )
     ]
@@ -195,6 +254,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max-examples", type=int, default=None)
     parser.add_argument("--missing-average-traces", action="store_true")
+    parser.add_argument("--rational-linear-traces", action="store_true")
     parser.add_argument("--include-answer-only-copy", action="store_true")
     args = parser.parse_args()
 
@@ -208,6 +268,7 @@ def main() -> None:
         seed=args.seed,
         max_examples=args.max_examples,
         missing_average_traces=args.missing_average_traces,
+        rational_linear_traces=args.rational_linear_traces,
         include_answer_only_copy=args.include_answer_only_copy,
     )
 
