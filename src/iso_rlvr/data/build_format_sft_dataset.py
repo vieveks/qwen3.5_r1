@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from fractions import Fraction
 from pathlib import Path
 import random
 from typing import Any
@@ -16,20 +17,102 @@ def build_xml_completion(gold_answers: list[str]) -> str:
     return f"<answers>\n{answer_lines}\n</answers>"
 
 
-def build_sft_row(row: dict[str, Any]) -> dict[str, Any]:
+def _format_fraction(value: Fraction) -> str:
+    if value.denominator == 1:
+        return str(value.numerator)
+    return f"{value.numerator}/{value.denominator}"
+
+
+def _parse_int_list(values: str) -> list[int]:
+    return [int(value.strip()) for value in values.split(",") if value.strip()]
+
+
+def build_missing_average_trace(row: dict[str, Any]) -> str:
+    traces = []
+    metadata_rows = row.get("metadata", [])
     gold_answers = [str(answer) for answer in row["gold_answers"]]
-    completion = build_xml_completion(gold_answers)
+    if len(metadata_rows) != len(gold_answers):
+        raise ValueError("missing_average metadata must match gold_answers length.")
+
+    for idx, (metadata, gold_answer) in enumerate(
+        zip(metadata_rows, gold_answers),
+        start=1,
+    ):
+        known_values = _parse_int_list(str(metadata["known"]))
+        mean_text = str(metadata["final_average"])
+        mean = Fraction(mean_text)
+        count = len(known_values) + 1
+        total_needed = mean * count
+        known_total = sum(known_values)
+        missing_value = total_needed - known_total
+        if _format_fraction(missing_value) != gold_answer:
+            raise ValueError(
+                "missing_average trace does not match gold answer: "
+                f"{_format_fraction(missing_value)} != {gold_answer}"
+            )
+
+        known_expression = " + ".join(str(value) for value in known_values)
+        traces.append(
+            "\n".join(
+                [
+                    f"Problem {idx} sum needed: {mean_text} x {count} = {_format_fraction(total_needed)}",
+                    f"Problem {idx} known sum: {known_expression} = {known_total}",
+                    f"Problem {idx} missing value: {_format_fraction(total_needed)} - {known_total} = {gold_answer}",
+                ]
+            )
+        )
+
+    return "\n\n".join(traces)
+
+
+def build_sft_row(
+    row: dict[str, Any],
+    missing_average_traces: bool = False,
+    force_answer_only: bool = False,
+) -> dict[str, Any]:
+    gold_answers = [str(answer) for answer in row["gold_answers"]]
+    xml_completion = build_xml_completion(gold_answers)
+    if (
+        missing_average_traces
+        and row["family_type"] == "missing_average"
+        and not force_answer_only
+    ):
+        completion = f"{build_missing_average_trace(row)}\n\n{xml_completion}"
+        target_style = "missing_average_trace_xml"
+    else:
+        completion = xml_completion
+        target_style = "answer_only_xml"
+
     return {
         "family_id": str(row["family_id"]),
         "family_type": str(row["family_type"]),
         "variant_ids": [str(variant_id) for variant_id in row["variant_ids"]],
         "num_variants": int(row["num_variants"]),
         "gold_answers": gold_answers,
+        "metadata": row.get("metadata", []),
         "prompt_format": str(row.get("prompt_format", "")),
+        "target_style": target_style,
         "prompt": str(row["prompt"]),
         "completion": completion,
         "text": f"{row['prompt']}\n{completion}",
     }
+
+
+def build_sft_rows(
+    row: dict[str, Any],
+    missing_average_traces: bool = False,
+    include_answer_only_copy: bool = False,
+) -> list[dict[str, Any]]:
+    if (
+        include_answer_only_copy
+        and missing_average_traces
+        and row["family_type"] == "missing_average"
+    ):
+        return [
+            build_sft_row(row, missing_average_traces=False),
+            build_sft_row(row, missing_average_traces=True),
+        ]
+    return [build_sft_row(row, missing_average_traces=missing_average_traces)]
 
 
 def split_by_family_id(
@@ -61,6 +144,8 @@ def build_format_sft_dataset(
     heldout_fraction: float = 0.1,
     seed: int = 0,
     max_examples: int | None = None,
+    missing_average_traces: bool = False,
+    include_answer_only_copy: bool = False,
 ) -> None:
     rows = read_jsonl(input_path)
     if max_examples is not None:
@@ -71,8 +156,24 @@ def build_format_sft_dataset(
         heldout_fraction=heldout_fraction,
         seed=seed,
     )
-    train_rows = [build_sft_row(row) for row in packed_train_rows]
-    heldout_rows = [build_sft_row(row) for row in packed_heldout_rows]
+    train_rows = [
+        sft_row
+        for row in packed_train_rows
+        for sft_row in build_sft_rows(
+            row,
+            missing_average_traces=missing_average_traces,
+            include_answer_only_copy=include_answer_only_copy,
+        )
+    ]
+    heldout_rows = [
+        sft_row
+        for row in packed_heldout_rows
+        for sft_row in build_sft_rows(
+            row,
+            missing_average_traces=missing_average_traces,
+            include_answer_only_copy=include_answer_only_copy,
+        )
+    ]
 
     write_jsonl(train_out, train_rows)
     if heldout_out is not None:
@@ -93,6 +194,8 @@ def main() -> None:
     parser.add_argument("--heldout-fraction", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max-examples", type=int, default=None)
+    parser.add_argument("--missing-average-traces", action="store_true")
+    parser.add_argument("--include-answer-only-copy", action="store_true")
     args = parser.parse_args()
 
     build_format_sft_dataset(
@@ -104,6 +207,8 @@ def main() -> None:
         heldout_fraction=args.heldout_fraction,
         seed=args.seed,
         max_examples=args.max_examples,
+        missing_average_traces=args.missing_average_traces,
+        include_answer_only_copy=args.include_answer_only_copy,
     )
 
 

@@ -1,6 +1,8 @@
 from iso_rlvr.data.build_format_sft_dataset import (
+    build_missing_average_trace,
     build_format_sft_dataset,
     build_sft_row,
+    build_sft_rows,
     build_xml_completion,
     split_by_family_id,
 )
@@ -14,6 +16,22 @@ def _packed_row(family_id: str, answer: str = "3") -> dict:
         "variant_ids": [f"{family_id}_v0", f"{family_id}_v1"],
         "num_variants": 2,
         "gold_answers": [answer, "7"],
+        "prompt_format": "xml",
+        "prompt": "Problem 1: ...\n\nProblem 2: ...",
+    }
+
+
+def _missing_average_row(family_id: str = "fam_000001") -> dict:
+    return {
+        "family_id": family_id,
+        "family_type": "missing_average",
+        "variant_ids": [f"{family_id}_v0", f"{family_id}_v1"],
+        "num_variants": 2,
+        "gold_answers": ["32", "32"],
+        "metadata": [
+            {"known": "56,29,13,15", "final_average": "29", "missing": 32},
+            {"known": "30,62,10,21,75,60,64", "final_average": "177/4", "missing": 32},
+        ],
         "prompt_format": "xml",
         "prompt": "Problem 1: ...\n\nProblem 2: ...",
     }
@@ -38,6 +56,7 @@ def test_build_sft_row_preserves_reward_context_and_adds_text_field():
     assert row["variant_ids"] == ["fam_000001_v0", "fam_000001_v1"]
     assert row["num_variants"] == 2
     assert row["gold_answers"] == ["16/5", "7"]
+    assert row["target_style"] == "answer_only_xml"
     assert row["prompt_format"] == "xml"
     assert row["completion"] == (
         "<answers>\n"
@@ -46,6 +65,59 @@ def test_build_sft_row_preserves_reward_context_and_adds_text_field():
         "</answers>"
     )
     assert row["text"] == f"{row['prompt']}\n{row['completion']}"
+
+
+def test_build_missing_average_trace_uses_prompt_metadata_values():
+    trace = build_missing_average_trace(_missing_average_row())
+
+    assert trace == (
+        "Problem 1 sum needed: 29 x 5 = 145\n"
+        "Problem 1 known sum: 56 + 29 + 13 + 15 = 113\n"
+        "Problem 1 missing value: 145 - 113 = 32\n\n"
+        "Problem 2 sum needed: 177/4 x 8 = 354\n"
+        "Problem 2 known sum: 30 + 62 + 10 + 21 + 75 + 60 + 64 = 322\n"
+        "Problem 2 missing value: 354 - 322 = 32"
+    )
+
+
+def test_build_sft_row_can_add_missing_average_trace_before_xml():
+    row = build_sft_row(_missing_average_row(), missing_average_traces=True)
+
+    assert row["target_style"] == "missing_average_trace_xml"
+    assert row["completion"].startswith("Problem 1 sum needed: 29 x 5 = 145")
+    assert row["completion"].endswith(
+        "<answers>\n"
+        "<answer_1>32</answer_1>\n"
+        "<answer_2>32</answer_2>\n"
+        "</answers>"
+    )
+
+
+def test_build_sft_row_keeps_algebra_answer_only_when_trace_mode_is_enabled():
+    row = build_sft_row(_packed_row("fam_000002"), missing_average_traces=True)
+
+    assert row["target_style"] == "answer_only_xml"
+    assert row["completion"] == (
+        "<answers>\n"
+        "<answer_1>3</answer_1>\n"
+        "<answer_2>7</answer_2>\n"
+        "</answers>"
+    )
+
+
+def test_build_sft_rows_can_include_answer_only_copy_for_missing_average():
+    rows = build_sft_rows(
+        _missing_average_row(),
+        missing_average_traces=True,
+        include_answer_only_copy=True,
+    )
+
+    assert [row["target_style"] for row in rows] == [
+        "answer_only_xml",
+        "missing_average_trace_xml",
+    ]
+    assert rows[0]["completion"].startswith("<answers>")
+    assert rows[1]["completion"].startswith("Problem 1 sum needed:")
 
 
 def test_split_by_family_id_keeps_families_disjoint():
@@ -95,3 +167,25 @@ def test_build_format_sft_dataset_can_write_matching_packed_splits(tmp_path):
     assert sft_train_ids == packed_train_ids
     assert sft_heldout_ids == packed_heldout_ids
     assert not sft_train_ids & sft_heldout_ids
+
+
+def test_build_format_sft_dataset_can_duplicate_traced_rows(tmp_path):
+    input_path = tmp_path / "packed.jsonl"
+    train_out = tmp_path / "sft_train.jsonl"
+    rows = [_missing_average_row("fam_000001"), _packed_row("fam_000002")]
+    write_jsonl(input_path, rows)
+
+    build_format_sft_dataset(
+        input_path,
+        train_out,
+        heldout_fraction=0.0,
+        missing_average_traces=True,
+        include_answer_only_copy=True,
+    )
+
+    sft_rows = read_jsonl(train_out)
+    assert [row["target_style"] for row in sft_rows] == [
+        "answer_only_xml",
+        "missing_average_trace_xml",
+        "answer_only_xml",
+    ]

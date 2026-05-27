@@ -1,0 +1,10 @@
+model_name: Qwen/Qwen2.5-Math-1.5B
+adapter_path: outputs/phase5/format_sft_qwen25_math_1_5b_xml_mixed_missing_avg_trace_1epoch/adapter_or_model
+dataset_path: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+output_path: outputs/phase5/packed_base_stage1_pair_xml_256_after_sft_mixed_missing_avg_trace_1epoch_prefix_heldout_full.jsonl
+max_new_tokens: 256
+temperature: 0.0
+top_p: 1.0
+device: auto
+response_prefix: "<answers>\n"
+resume: false

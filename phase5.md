@@ -1050,6 +1050,258 @@ This result changes the recommendation slightly:
 - Build the next bridge as mixed SFT: majority short deterministic reasoning traces plus final XML, minority answer-only XML rows.
 - Give special attention to `missing_average`, where the current adapter learned a shortcut of returning the target average instead of solving for the missing number.
 
+### Experiment 5.10: Mixed Missing-Average Trace SFT
+
+Goal:
+
+```text
+Fix the missing_average family without disrupting rational_linear_equation.
+```
+
+Dataset change:
+
+`build_format_sft_dataset.py` now supports deterministic missing-average traces. The trace uses the same `known` and `final_average` metadata strings used by the prompt generator, then computes the three arithmetic steps programmatically:
+
+```text
+Problem 1 sum needed: 29 x 5 = 145
+Problem 1 known sum: 56 + 29 + 13 + 15 = 113
+Problem 1 missing value: 145 - 113 = 32
+```
+
+The final XML answer block is unchanged.
+
+Mixed SFT target policy:
+
+| Family type | Target style |
+| --- | --- |
+| `missing_average` | short deterministic trace plus final XML |
+| `rational_linear_equation` | answer-only XML |
+
+Generated dataset:
+
+```text
+Builder flag: --missing-average-traces
+Train output: outputs/phase5/format_sft_pair_xml_mixed_missing_avg_trace_train.jsonl
+Heldout output: outputs/phase5/format_sft_pair_xml_mixed_missing_avg_trace_heldout.jsonl
+Packed train output: outputs/phase5/packed_stage1_pair_xml_mixed_missing_avg_trace_train.jsonl
+Packed heldout output: outputs/phase5/packed_stage1_pair_xml_mixed_missing_avg_trace_heldout.jsonl
+Train rows: 144
+Train target styles:
+  answer_only_xml: 92
+  missing_average_trace_xml: 52
+```
+
+Training config:
+
+```text
+Config: configs/format_sft_qwen25_math_1_5b_xml_mixed_missing_avg_trace_1epoch.yaml
+Base model: Qwen/Qwen2.5-Math-1.5B
+Rows: 144
+Epochs: 1
+Max steps: 72
+Batch size: 2
+Learning rate: 2e-4
+Max sequence length: 1024
+LoRA rank: 8
+LoRA alpha: 16
+LoRA dropout: 0.05
+Adapter output: outputs/phase5/format_sft_qwen25_math_1_5b_xml_mixed_missing_avg_trace_1epoch/adapter_or_model
+```
+
+Final logged training losses:
+
+| Step | Loss |
+| ---: | ---: |
+| 66 | 0.0854 |
+| 67 | 0.0163 |
+| 68 | 0.0743 |
+| 69 | 0.1082 |
+| 70 | 0.0590 |
+| 71 | 0.0183 |
+
+Heldout result at `max_new_tokens: 256`:
+
+```text
+Config: configs/packed_base_eval_stage1_pair_xml_256_after_sft_mixed_missing_avg_trace_1epoch_heldout_full.yaml
+Dataset: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+examples: 16
+variant_examples: 32
+accuracy: 0.8438
+family_accuracy: 0.7500
+parse_complete_rate: 0.9375
+answer_count_mismatch_rate: 0.0625
+suspicious_rate: 0.0625
+avg_reward: 1.2652
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch rate | Suspicious rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.8333 | 0.6667 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_linear_equation` | 0.8500 | 0.8000 | 0.9000 | 0.1000 | 0.1000 |
+
+Result against the proposed bridge gates:
+
+| Gate | Target | Result |
+| --- | ---: | ---: |
+| Overall accuracy above answer-only baseline | > 0.3125 | 0.8438 |
+| `missing_average` accuracy | > 0.3000 | 0.8333 |
+| `rational_linear_equation` accuracy | >= 0.4000 | 0.8500 |
+| Parse complete | >= 0.9500 | 0.9375 |
+| Answer-count mismatch | <= 0.0500 | 0.0625 |
+
+Conclusion:
+
+The mixed bridge solved the reasoning problem. It raised overall heldout accuracy from `0.3125` to `0.8438`, and the previously broken `missing_average` family jumped from `0.0000` to `0.8333`. This is the strongest result so far.
+
+But it introduced one interface regression: a single rational-linear heldout row looped in visible algebra trace text until the token cap and never reached XML. That one row moved parse completeness from the target `>= 0.9500` to `0.9375`.
+
+Representative failure:
+
+```text
+Family: rational_linear_equation
+Gold: ["8/5", "8/5"]
+Parsed: [null, null]
+Failure: repeated algebra trace, no XML before token cap
+```
+
+This means the bridge is directionally correct, but the exact mixed target distribution still needs one more tightening pass before GRPO.
+
+### Experiment 5.11: Interface Diagnostics On Mixed Adapter
+
+Two cheap diagnostics were run on the mixed adapter.
+
+#### Response-Prefix Eval
+
+Config:
+
+```text
+configs/packed_base_eval_stage1_pair_xml_256_after_sft_mixed_missing_avg_trace_1epoch_prefix_heldout_full.yaml
+response_prefix: "<answers>\n"
+```
+
+Result:
+
+```text
+accuracy: 0.2500
+family_accuracy: 0.2500
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.7500
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch rate | Suspicious rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 1.0000 |
+| `rational_linear_equation` | 0.4000 | 0.4000 | 1.0000 | 0.0000 | 0.6000 |
+
+Conclusion:
+
+The response prefix restores XML compliance but destroys the missing-average reasoning gain. The trace is carrying the computation; forcing immediate XML makes the model fall back to shallow answers.
+
+#### Longer Decode Eval
+
+Config:
+
+```text
+configs/packed_base_eval_stage1_pair_xml_384_after_sft_mixed_missing_avg_trace_1epoch_heldout_full.yaml
+max_new_tokens: 384
+```
+
+Result:
+
+```text
+accuracy: 0.8438
+family_accuracy: 0.7500
+parse_complete_rate: 0.9375
+answer_count_mismatch_rate: 0.0625
+suspicious_rate: 0.0625
+```
+
+Conclusion:
+
+Increasing the decode budget did not fix the one malformed rational-linear row. The issue is not simply that `256` tokens is too short; the adapter can enter a trace loop on algebra. The next fix should adjust the SFT mixture, not just decoding length.
+
+### Experiment 5.12: Mixed-v2 Answer-Only Copy Control
+
+Goal:
+
+```text
+Test whether stronger answer-only pressure prevents rational-linear trace loops while preserving missing-average gains.
+```
+
+Dataset change:
+
+Mixed-v2 includes answer-only XML rows for every packed example, plus an additional trace+XML row for each `missing_average` example.
+
+Generated dataset:
+
+```text
+Builder flags: --missing-average-traces --include-answer-only-copy
+Train output: outputs/phase5/format_sft_pair_xml_mixed_v2_missing_avg_trace_plus_answer_train.jsonl
+Heldout output: outputs/phase5/format_sft_pair_xml_mixed_v2_missing_avg_trace_plus_answer_heldout.jsonl
+Train rows: 196
+Train target styles:
+  answer_only_xml: 144
+  missing_average_trace_xml: 52
+```
+
+Training config:
+
+```text
+Config: configs/format_sft_qwen25_math_1_5b_xml_mixed_v2_missing_avg_trace_plus_answer_1epoch.yaml
+Base model: Qwen/Qwen2.5-Math-1.5B
+Rows: 196
+Epochs: 1
+Max steps: 98
+Batch size: 2
+Learning rate: 2e-4
+Max sequence length: 1024
+LoRA rank: 8
+LoRA alpha: 16
+LoRA dropout: 0.05
+Adapter output: outputs/phase5/format_sft_qwen25_math_1_5b_xml_mixed_v2_missing_avg_trace_plus_answer_1epoch/adapter_or_model
+```
+
+Heldout result:
+
+```text
+Config: configs/packed_base_eval_stage1_pair_xml_256_after_sft_mixed_v2_missing_avg_trace_plus_answer_1epoch_heldout_full.yaml
+examples: 16
+variant_examples: 32
+accuracy: 0.5625
+family_accuracy: 0.5625
+parse_complete_rate: 0.9375
+answer_count_mismatch_rate: 0.0625
+suspicious_rate: 0.3750
+avg_reward: 0.8677
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch rate | Suspicious rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.6667 | 0.6667 | 1.0000 | 0.0000 | 0.3333 |
+| `rational_linear_equation` | 0.5000 | 0.5000 | 0.9000 | 0.1000 | 0.4000 |
+
+Conclusion:
+
+Mixed-v2 is worse than mixed-v1. It reduced accuracy from `0.8438` to `0.5625` and did not improve parse completeness. The extra answer-only pressure weakened the reasoning gain without fixing the rational-linear malformed row.
+
+Current best adapter remains mixed-v1:
+
+```text
+outputs/phase5/format_sft_qwen25_math_1_5b_xml_mixed_missing_avg_trace_1epoch/adapter_or_model
+```
+
+The next fix should not be more answer-only pressure. It should either:
+
+- add short deterministic rational-linear traces so algebra traces terminate cleanly before XML, or
+- add an explicit loop/length control during SFT/eval.
+
 ## Recommended Immediate Order
 
 1. Implement XML parser and tests. Done.
@@ -1065,7 +1317,11 @@ This result changes the recommendation slightly:
 11. If parse gate passes, resume GRPO implementation. Blocked for now by low answer accuracy and high wrong-collapse diagnostics; do not resume GRPO yet.
 12. Run no-training few-shot XML diagnostic before scaling SFT. Done; no-prefix failed with empty completions, response-prefix improved parse to 0.2500 but accuracy stayed 0.0000.
 13. Run one full epoch of answer-only XML SFT as an undertraining control. Done; accuracy improved to 0.3125 but missing-average stayed at 0.0000, so answer-only SFT remains insufficient.
-14. Build a reasoning-preserving SFT dataset with short deterministic traces and final XML answers. Next.
+14. Build a reasoning-preserving SFT dataset with short deterministic traces and final XML answers. Done for `missing_average`.
+15. Train and evaluate a one-epoch mixed missing-average trace adapter. Done; accuracy reached 0.8438, but parse completeness missed the strict gate by one row.
+16. Run interface diagnostics on the mixed adapter. Done; response prefix hurts accuracy, longer decode does not fix the malformed algebra row.
+17. Build a mixed-v2 bridge that keeps missing-average traces but increases answer-only pressure, especially for rational-linear rows. Done; worse than mixed-v1.
+18. Add deterministic rational-linear traces or another targeted loop control. Next.
 
 ## What We Should Ask The Critic
 
@@ -1089,16 +1345,21 @@ Continue with XML answer contract plus SFT-first stabilization on `Qwen/Qwen2.5-
 
 The 20-step LoRA smoke proves the interface can be fixed locally: heldout parse completeness is now 1.0000. However, answer accuracy was only 0.1250 on full heldout and the model often emitted plausible but wrong repeated XML answers. The few-shot diagnostic also failed: no-prefix produced empty completions, and response-prefix only reached parse_complete_rate 0.2500 with accuracy 0.0000.
 
-The one-epoch answer-only control improved accuracy to 0.3125 while preserving perfect parse completeness, so the 20-step run was partly undertrained. But the family split is decisive: `rational_linear_equation` reached 0.5000 accuracy, while `missing_average` stayed at 0.0000. The model is still learning format and shallow answer patterns more reliably than the underlying computations. Do not start GRPO yet.
+The one-epoch answer-only control improved accuracy to 0.3125 while preserving perfect parse completeness, so the 20-step run was partly undertrained. But the family split was decisive: `rational_linear_equation` reached 0.5000 accuracy, while `missing_average` stayed at 0.0000.
 
-The next step should be a reasoning-preserving supervised bridge:
+The mixed missing-average trace bridge fixed the reasoning side: heldout accuracy reached `0.8438`, `missing_average` reached `0.8333`, and `rational_linear_equation` reached `0.8500`. However, the model learned to emit visible traces more broadly than intended. One rational-linear row looped in trace text and failed to emit XML, leaving parse completeness at `0.9375` instead of the target `>= 0.9500`.
 
-1. Build a synthetic SFT dataset with short deterministic solution traces plus final XML answers for the current two families, with extra focus on `missing_average`.
-2. Keep the final answer surface exactly XML, so the reward parser remains unchanged.
-3. Train a small LoRA on mixed targets: mostly worked rows to preserve or restore math behavior, plus answer-only XML rows to preserve the interface.
-4. Evaluate every candidate adapter on the packed heldout split.
-5. Gate on both sides: `parse_complete_rate >= 0.95`, `answer_count_mismatch_rate <= 0.05`, and accuracy materially above the current 0.3125 one-epoch answer-only baseline.
-6. Keep GRPO blocked until the post-SFT reward smoke has both high parse compliance and a non-degenerate reward distribution.
+Mixed-v2, which added answer-only copies for all rows, was worse: accuracy fell to `0.5625` and parse completeness stayed at `0.9375`. Do not start GRPO yet.
+
+The next step should be a targeted trace/loop-control bridge:
+
+1. Keep deterministic traces for `missing_average`; they work.
+2. Do not add more answer-only copies; that was tested and hurt accuracy.
+3. Add short deterministic rational-linear traces, or another explicit loop/length control, so algebra traces terminate before XML instead of looping.
+4. Keep the final answer surface exactly XML, so the reward parser remains unchanged.
+5. Train a small LoRA for one epoch and evaluate on the same packed heldout split.
+6. Gate on both sides: `parse_complete_rate >= 0.95`, `answer_count_mismatch_rate <= 0.05`, `missing_average` accuracy above `0.30`, `rational_linear_equation` accuracy at least `0.40`, and overall accuracy materially above `0.3125`.
+7. If that passes, unblock a tiny GRPO smoke, not full GRPO training.
 
 The 3B-Instruct smoke confirms the XML contract is viable, but the model's low math accuracy makes it a poor main RL target for this project.
 
