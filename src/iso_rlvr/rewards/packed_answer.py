@@ -7,6 +7,11 @@ import re
 NUMBER_PATTERN = r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:/\d+)?(?:\.\d+)?"
 LATEX_FRAC_PATTERN = r"\\frac\{[-+]?\d+\}\{\d+\}"
 VALUE_PATTERN = rf"(?:{NUMBER_PATTERN}|{LATEX_FRAC_PATTERN})"
+XML_ANSWER_PATTERN = re.compile(
+    r"<answer_(\d+)>\s*(.*?)\s*</answer_\1>",
+    re.IGNORECASE | re.DOTALL,
+)
+XML_WRAPPER_PATTERN = re.compile(r"</?answers\b", re.IGNORECASE)
 
 INDEXED_PATTERNS = [
     re.compile(
@@ -81,6 +86,32 @@ def _parse_indexed_answers(text: str, expected_count: int) -> PackedAnswerParse 
     )
 
 
+def _parse_xml_answers(text: str, expected_count: int) -> PackedAnswerParse | None:
+    matches = list(XML_ANSWER_PATTERN.finditer(text))
+    if not matches and not XML_WRAPPER_PATTERN.search(text):
+        return None
+
+    answers: list[str | None] = [None] * expected_count
+    extra_answers: list[str] = []
+    for match in matches:
+        idx = int(match.group(1))
+        raw_value = match.group(2).strip()
+        if not re.fullmatch(VALUE_PATTERN, raw_value):
+            continue
+        value = _clean_value(raw_value)
+        if 1 <= idx <= expected_count and answers[idx - 1] is None:
+            answers[idx - 1] = value
+        else:
+            extra_answers.append(value)
+
+    return PackedAnswerParse(
+        answers=answers,
+        missing_indices=[idx for idx, value in enumerate(answers, start=1) if value is None],
+        extra_answers=extra_answers,
+        mode="xml",
+    )
+
+
 def _parse_boxed_answers(text: str, expected_count: int) -> PackedAnswerParse | None:
     found = [_clean_value(match.group(1)) for match in BOXED_PATTERN.finditer(text)]
     if not found:
@@ -99,6 +130,10 @@ def _parse_boxed_answers(text: str, expected_count: int) -> PackedAnswerParse | 
 def parse_packed_answers(text: str, expected_count: int) -> PackedAnswerParse:
     if expected_count <= 0:
         raise ValueError("expected_count must be positive.")
+
+    xml = _parse_xml_answers(text, expected_count)
+    if xml is not None:
+        return xml
 
     indexed = _parse_indexed_answers(text, expected_count)
     if indexed is not None:

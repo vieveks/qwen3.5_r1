@@ -47,8 +47,11 @@ def diagnose_packed_parse(
         raise ValueError("parsed answers and gold_answers must have the same length.")
 
     present_answers = [answer for answer in parsed.answers if answer is not None]
-    repeated_answer = len(present_answers) > 1 and len(set(present_answers)) == 1
-    copied_answer_indices = _copied_answer_indices(parsed.answers)
+    gold_repeated = _all_normalized_values_same(gold_answers)
+    repeated_answer = (
+        len(present_answers) > 1 and len(set(present_answers)) == 1 and not gold_repeated
+    )
+    copied_answer_indices = _copied_answer_indices(parsed.answers, gold_answers)
     only_first_answer = parsed.answers[0] is not None and all(
         answer is None for answer in parsed.answers[1:]
     )
@@ -67,16 +70,37 @@ def diagnose_packed_parse(
     )
 
 
-def _copied_answer_indices(answers: Sequence[str | None]) -> list[int]:
-    seen: set[str] = set()
+def _copied_answer_indices(
+    answers: Sequence[str | None],
+    gold_answers: Sequence[str],
+) -> list[int]:
+    seen_answers: set[Fraction | str] = set()
+    seen_gold: set[Fraction | str] = set()
     copied = []
-    for idx, answer in enumerate(answers, start=1):
+    for idx, (answer, gold_raw) in enumerate(zip(answers, gold_answers), start=1):
+        gold = _normalized_key(gold_raw)
         if answer is None:
+            seen_gold.add(gold)
             continue
-        if answer in seen:
+        normalized_answer = _normalized_key(answer)
+        expected_duplicate = gold in seen_gold
+        if normalized_answer in seen_answers and not expected_duplicate:
             copied.append(idx)
-        seen.add(answer)
+        seen_answers.add(normalized_answer)
+        seen_gold.add(gold)
     return copied
+
+
+def _all_normalized_values_same(values: Sequence[str]) -> bool:
+    if len(values) < 2:
+        return False
+    normalized = [_normalized_key(value) for value in values]
+    return len(set(normalized)) == 1
+
+
+def _normalized_key(value: str) -> Fraction | str:
+    normalized = normalize_number(value)
+    return normalized if normalized is not None else value.strip()
 
 
 def _wrong_offset_flags(

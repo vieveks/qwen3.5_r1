@@ -1,6 +1,6 @@
 # Phase 5: Reward Interface Stabilization Before GRPO
 
-Status: proposed working spec for critic review
+Status: active implementation log and working spec
 
 Date: 2026-05-27
 
@@ -105,7 +105,7 @@ Invalid parse samples should not silently contribute misleading correctness rewa
 - parse completeness
 - answer-count mismatch
 - copied prompt answers
-- repeated answers
+- repeated answers, but only when repetition is not expected from the gold answer pattern
 - only-first-answer behavior
 - suspicious parse patterns
 - truncation
@@ -220,6 +220,10 @@ Tests:
 - Marks duplicate tag as extra.
 - Rejects prose inside answer tag.
 - Does not parse problem statements as answers.
+
+Implementation note:
+
+Packed diagnostics must be gold-aware. The current two-variant isomorphic families often intentionally have the same gold answer for both variants. A repeated predicted answer is therefore not suspicious by itself. It is suspicious when the gold answers differ, or when a repeated wrong answer creates a same-wrong additive or multiplicative offset.
 
 ### Step 2: XML Packed Dataset Builder Mode
 
@@ -395,18 +399,22 @@ But the critical rule should be:
 No correctness credit unless the answer interface is parse-complete.
 ```
 
-Open question for critic:
+Provisional decision:
 
-Should parse-incomplete completions receive:
+```text
+Parse-incomplete completions receive zero correctness reward and no family bonus.
+They may receive a small format penalty, but not a large negative reward at first.
+They should remain in the GRPO group unless experiments show group statistics are unstable.
+```
 
-1. A fixed negative reward.
-2. Zero reward.
-3. Format-only penalty while masking correctness.
-4. Be dropped from the GRPO group.
+Rationale:
 
-My current recommendation:
+- A strong negative reward can over-focus early training on avoiding interface failures in brittle ways.
+- Zero correctness reward is enough to prevent malformed outputs from getting task credit.
+- Dropping parse failures can distort GRPO group statistics, especially when parse completeness is still improving.
+- Partial correctness credit for malformed outputs is dangerous because it teaches the model that parser-adjacent prose is acceptable.
 
-Use a fixed negative or low reward for parse-incomplete completions during early GRPO, but keep detailed diagnostics. Dropping too many samples can distort group statistics. Giving partial correctness credit to malformed outputs is dangerous.
+This decision can be revisited after the Phase 5 format gate passes and we have reward-distribution data from post-SFT packed smokes.
 
 ## GRPO Compatibility Notes
 
@@ -451,6 +459,15 @@ all parser tests pass
 no problem-statement false positives
 ```
 
+Result:
+
+```text
+Implemented.
+Parser prefers XML answer tags before indexed/boxed fallback paths.
+Malformed XML attempts do not fall through to old parser heuristics.
+Tests pass.
+```
+
 ### Experiment 5.2: XML Prompt Base Smoke
 
 Model:
@@ -475,6 +492,33 @@ Expected:
 
 Probably still poor, but worth measuring.
 
+Decision rule:
+
+```text
+If parse_complete_rate >= 0.90, run a larger confirmation smoke before SFT.
+If the confirmation smoke holds, skip format SFT and resume GRPO planning with this model/prompt.
+```
+
+Result:
+
+```text
+Model: Qwen/Qwen2.5-Math-1.5B
+Config: configs/packed_base_eval_stage1_pair_xml_256_smoke.yaml
+Dataset: outputs/phase5/packed_stage1_pair_xml_calibrated_train.jsonl
+examples: 8
+variant_examples: 16
+accuracy: 0.1875
+family_accuracy: 0.1250
+parse_complete_rate: 0.1250
+answer_count_mismatch_rate: 0.8750
+suspicious_rate: 1.0000
+avg_reward: 0.1453
+```
+
+Conclusion:
+
+XML prompting alone did not improve the base math model. It usually still emitted reasoning first, then sometimes began the XML block too late in the 256-token budget. XML is still useful as a stricter answer contract and SFT target, but it is not sufficient as a prompt-only fix for `Qwen/Qwen2.5-Math-1.5B`.
+
 ### Experiment 5.3: XML Prompt 3B-Instruct Smoke
 
 Model:
@@ -495,6 +539,61 @@ Pass condition:
 parse_complete_rate >= 0.90
 ```
 
+Decision rule:
+
+```text
+If parse_complete_rate >= 0.90, run a larger confirmation smoke before SFT.
+If parse completeness holds but math accuracy is weak, keep 3B as a diagnostic result and continue SFT on the math-specialized 1.5B model.
+If parse completeness and accuracy both look good, consider 3B as a possible training candidate.
+```
+
+Tiny smoke result:
+
+```text
+Model: Qwen/Qwen2.5-3B-Instruct
+Config: configs/packed_3b_instruct_eval_stage1_pair_xml_256_smoke.yaml
+Dataset: outputs/phase5/packed_stage1_pair_xml_calibrated_train.jsonl
+examples: 8
+variant_examples: 16
+accuracy: 0.0625
+family_accuracy: 0.0000
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+avg_reward: 0.1146
+```
+
+Confirmation result:
+
+```text
+Model: Qwen/Qwen2.5-3B-Instruct
+Config: configs/packed_3b_instruct_eval_stage1_pair_xml_256_confirm.yaml
+Dataset: outputs/phase5/packed_stage1_pair_xml_calibrated_train.jsonl
+examples: 32
+variant_examples: 64
+accuracy: 0.0313
+family_accuracy: 0.0000
+parse_complete_rate: 0.9375
+answer_count_mismatch_rate: 0.0625
+suspicious_rate: 0.0625
+avg_reward: 0.0697
+```
+
+By family type on the 32-example confirmation:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch rate | Suspicious rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_linear_equation` | 0.0500 | 0.0000 | 0.9000 | 0.1000 | 0.1000 |
+
+Observed behavior:
+
+The model emitted short XML answer blocks immediately, with little or no reasoning. The two malformed cases were malformed answer values inside XML tags, such as invalid LaTeX or mixed-fraction strings, not a collapse back into prose.
+
+Conclusion:
+
+`Qwen/Qwen2.5-3B-Instruct` solves the reward-interface problem much better than the 1.5B math model, but its math accuracy is too weak for the current task. Treat it as a diagnostic and format-following reference, not as the main training model. Continue with format SFT on `Qwen/Qwen2.5-Math-1.5B`.
+
 ### Experiment 5.4: Tiny Format SFT Dataset
 
 Goal:
@@ -510,6 +609,39 @@ dataset examples manually inspect cleanly
 train/heldout split is by family_id
 targets contain no reasoning
 ```
+
+Result:
+
+```text
+Implemented.
+Builder: src/iso_rlvr/data/build_format_sft_dataset.py
+Input: outputs/phase5/packed_stage1_pair_xml_calibrated_train.jsonl
+Train output: outputs/phase5/format_sft_pair_xml_train.jsonl
+Heldout output: outputs/phase5/format_sft_pair_xml_heldout.jsonl
+Packed train output: outputs/phase5/packed_stage1_pair_xml_sft_train.jsonl
+Packed heldout output: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+Train rows: 144
+Heldout rows: 16
+Split: by family_id, seed 0, heldout_fraction 0.1
+```
+
+Each row contains:
+
+- `prompt`
+- `completion`
+- `text`
+- `family_id`
+- `family_type`
+- `variant_ids`
+- `num_variants`
+- `gold_answers`
+- `prompt_format`
+
+The `completion` is answer-only XML generated directly from `gold_answers`, with no reasoning.
+
+Conclusion:
+
+The dataset builder is now doing the right split for both SFT and post-SFT evaluation. This matters because the adapter should be evaluated on heldout packed rows from the same heldout family ids used for the SFT heldout file. The previous first-8-row train smoke was useful as a mechanical check, but it was not enough to claim generalization.
 
 ### Experiment 5.5: Tiny LoRA Format SFT
 
@@ -538,6 +670,41 @@ heldout parse_complete_rate >= 0.95
 suspicious_rate <= 0.10
 ```
 
+Result:
+
+```text
+Implemented.
+Trainer: src/iso_rlvr/train/format_sft.py
+Config: configs/format_sft_qwen25_math_1_5b_xml_smoke.yaml
+Base model: Qwen/Qwen2.5-Math-1.5B
+Method: LoRA SFT
+LoRA rank: 8
+LoRA alpha: 16
+LoRA dropout: 0.05
+Batch size: 2
+Max steps: 20
+Learning rate: 2e-4
+Max sequence length: 768
+Trainable parameters: 9,232,384
+Total parameters: 1,552,946,688
+Trainable percent: 0.5945%
+Adapter output: outputs/phase5/format_sft_qwen25_math_1_5b_xml_smoke/adapter_or_model
+```
+
+Training loss fell quickly in the first five logged steps:
+
+| Step | Loss |
+| ---: | ---: |
+| 0 | 0.7888 |
+| 1 | 0.7339 |
+| 2 | 0.5598 |
+| 3 | 0.4423 |
+| 4 | 0.3282 |
+
+Conclusion:
+
+The tiny LoRA run successfully taught the model the answer-only XML surface at least mechanically. This is not yet a reasoning improvement. It is a reward-interface warmup.
+
 ### Experiment 5.6: Post-SFT Packed Reward Smoke
 
 Goal:
@@ -565,32 +732,166 @@ no major parser pathologies
 
 Only after this should GRPO resume.
 
+Train-row smoke result:
+
+```text
+Model: Qwen/Qwen2.5-Math-1.5B
+Adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_smoke/adapter_or_model
+Config: configs/packed_base_eval_stage1_pair_xml_256_after_sft_smoke.yaml
+Dataset: outputs/phase5/packed_stage1_pair_xml_calibrated_train.jsonl
+examples: 8
+variant_examples: 16
+accuracy: 0.1250
+family_accuracy: 0.1250
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.8750
+avg_reward: 0.2320
+```
+
+Heldout smoke result:
+
+```text
+Model: Qwen/Qwen2.5-Math-1.5B
+Adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_smoke/adapter_or_model
+Config: configs/packed_base_eval_stage1_pair_xml_256_after_sft_heldout_smoke.yaml
+Dataset: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+examples: 8
+variant_examples: 16
+accuracy: 0.1250
+family_accuracy: 0.1250
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.8750
+avg_reward: 0.2320
+```
+
+Full heldout result:
+
+```text
+Model: Qwen/Qwen2.5-Math-1.5B
+Adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_smoke/adapter_or_model
+Config: configs/packed_base_eval_stage1_pair_xml_256_after_sft_heldout_full.yaml
+Dataset: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+examples: 16
+variant_examples: 32
+accuracy: 0.1250
+family_accuracy: 0.1250
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.8750
+avg_reward: 0.2321
+```
+
+By family type on the full heldout run:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch rate | Suspicious rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 1.0000 |
+| `rational_linear_equation` | 0.2000 | 0.2000 | 1.0000 | 0.0000 | 0.8000 |
+
+Representative heldout completions:
+
+```xml
+<answers>
+<answer_1>100</answer_1>
+<answer_2>100</answer_2>
+</answers>
+```
+
+Gold for that row:
+
+```text
+["32", "32"]
+```
+
+Another heldout row:
+
+```xml
+<answers>
+<answer_1>11/5</answer_1>
+<answer_2>11/5</answer_2>
+</answers>
+```
+
+Gold for that row:
+
+```text
+["11/5", "11/5"]
+```
+
+Conclusion:
+
+The tiny format SFT solved the immediate reward-interface failure. The heldout parse gate is passed:
+
+```text
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+```
+
+But it did not solve answer quality. Accuracy remains low, and many wrong outputs are collapsed repeated answers. Because these isomorphic families often intentionally have identical gold answers, repetition alone is no longer counted as suspicious after the diagnostics fix. The remaining suspicious signal mostly comes from same-wrong additive or multiplicative offsets, which is a real failure mode.
+
+This means Phase 5 succeeded at stabilizing the parser/verifier interface but has not yet produced a model ready for GRPO. We need a stronger format SFT run, a small reasoning SFT component, or dataset/prompt changes before policy optimization.
+
+### Experiment 5.7: Single-Problem XML Fallback Smoke
+
+Run this only if the two-variant XML prompt fails on both 1.5B and 3B.
+
+Goal:
+
+```text
+Separate format-compliance failure from packing-horizon failure.
+```
+
+Interpretation:
+
+| Result | Interpretation | Next action |
+| --- | --- | --- |
+| Single-problem XML passes, two-variant XML fails | Packing horizon is the main issue | Format SFT should start with one problem, then curriculum to two. |
+| Single-problem XML also fails | General format obedience is the issue | Format SFT is required before any packed RL work. |
+
 ## Recommended Immediate Order
 
-1. Implement XML parser and tests.
-2. Add XML prompt mode to packed dataset builder.
-3. Build XML packed smoke dataset.
-4. Run base 1.5B XML smoke.
-5. Run `Qwen/Qwen2.5-3B-Instruct` XML diagnostic smoke.
-6. Build answer-only XML SFT dataset.
-7. Train tiny LoRA format adapter on `Qwen/Qwen2.5-Math-1.5B`.
-8. Re-evaluate parse gate.
-9. If parse gate passes, resume GRPO implementation.
+1. Implement XML parser and tests. Done.
+2. Add XML prompt mode to packed dataset builder. Done.
+3. Build XML packed smoke dataset. Done.
+4. Run base 1.5B XML smoke. Done; failed parse gate.
+5. Run `Qwen/Qwen2.5-3B-Instruct` XML diagnostic smoke. Done; passed parse gate but failed accuracy.
+6. If either XML smoke passes the parse gate, run a larger confirmation smoke and skip SFT if the result holds. Done for 3B; parse holds enough to confirm interface compliance, but accuracy is too weak to skip SFT on the math model.
+7. If both XML smokes fail, optionally run the single-problem XML fallback smoke. Not needed right now because 3B shows the XML interface itself is viable.
+8. Build answer-only XML SFT dataset. Done.
+9. Train tiny LoRA format adapter on `Qwen/Qwen2.5-Math-1.5B`. Done; 20-step smoke completed.
+10. Re-evaluate parse gate. Done; heldout parse_complete_rate is 1.0000 and answer_count_mismatch_rate is 0.0000.
+11. If parse gate passes, resume GRPO implementation. Blocked for now by low answer accuracy and high wrong-collapse diagnostics; do not resume GRPO yet.
 
 ## What We Should Ask The Critic
 
 1. Is XML the right immediate answer surface, or should we use JSON despite fraction handling?
-2. Should parse-incomplete samples get negative reward, zero reward, or be masked/dropped during GRPO?
+2. Is the provisional parse-incomplete rule right: zero correctness reward, no family bonus, small format penalty at most, and keep samples in the GRPO group?
 3. Is `parse_complete_rate >= 0.90` strict enough, or should the gate be `>= 0.95` before RL?
 4. Should we run the 3B-Instruct diagnostic before implementing SFT, or is SFT obviously required?
 5. Is two-variant packing still the right horizon, or should Phase 5 temporarily drop to one problem per prompt to isolate format behavior?
-6. Should final answer tags be answer-only, or should we eventually separate hidden/visible reasoning with `<think>` and `<answers>`?
+
+Deferred question:
+
+```text
+Should final answer tags eventually be paired with separate hidden/visible reasoning tags such as <think> and <answers>?
+```
+
+This is real but premature. Phase 5 should stay answer-only unless the critic sees a strong reason to introduce reasoning channels now.
 
 ## Current Recommendation
 
-Proceed with XML answer contract plus tiny format SFT.
+Continue with XML answer contract plus SFT-first stabilization on `Qwen/Qwen2.5-Math-1.5B`.
 
-Do not spend time on GRPO implementation until the format gate passes. Do not spend time on constrained decoding first unless SFT fails. Run the 3B-Instruct smoke as a cheap diagnostic, but keep `Qwen/Qwen2.5-Math-1.5B` as the main training target because it fits the 5070 Ti and is math-specialized.
+The 20-step LoRA smoke proves the interface can be fixed locally: heldout parse completeness is now 1.0000. However, answer accuracy is still only 0.1250 on full heldout and the model often emits plausible but wrong repeated XML answers. Do not start GRPO yet. The next step should be a stronger supervised bridge:
+
+1. Increase format SFT from 20 steps to a real short run over the 144-row train split for 1 to 3 epochs.
+2. Add a small heldout-monitored evaluation loop after each run.
+3. Consider adding answer-only reasoning SFT examples only if pure format SFT keeps producing clean but wrong XML.
+4. Keep GRPO blocked until the post-SFT reward smoke has both high parse compliance and a non-degenerate reward distribution.
+
+The 3B-Instruct smoke confirms the XML contract is viable, but the model's low math accuracy makes it a poor main RL target for this project.
 
 The core Phase 5 thesis:
 

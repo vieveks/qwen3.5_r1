@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from peft import PeftModel
 from tqdm import tqdm
 
 from iso_rlvr.eval.packed_diagnostics import diagnose_packed_parse
@@ -102,6 +103,9 @@ def run_packed_eval(config_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     model, tokenizer, _device = load_causal_lm(cfg["model_name"], cfg.get("device", "auto"))
+    if cfg.get("adapter_path"):
+        model = PeftModel.from_pretrained(model, cfg["adapter_path"])
+        model.eval()
 
     log_mode = "a" if resume and output_path.exists() else "w"
     with output_path.open(log_mode, encoding="utf-8") as output_handle:

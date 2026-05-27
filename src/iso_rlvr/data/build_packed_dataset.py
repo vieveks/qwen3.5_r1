@@ -10,6 +10,7 @@ from iso_rlvr.io import group_by_family, read_jsonl, write_jsonl
 
 
 VARIANT_SUFFIX_RE = re.compile(r"_v(\d+)$")
+PROMPT_FORMATS = {"answer_lines", "xml"}
 
 
 def variant_sort_key(row: dict[str, Any]) -> tuple[int, str]:
@@ -29,12 +30,28 @@ def parse_family_types(values: list[str] | None) -> set[str] | None:
     return family_types or None
 
 
-def build_packed_prompt(rows: list[dict[str, Any]]) -> str:
-    answer_lines = "\n".join(
-        f"Answer {idx}: <number>" for idx in range(1, len(rows) + 1)
-    )
+def build_packed_prompt(rows: list[dict[str, Any]], prompt_format: str = "answer_lines") -> str:
+    if prompt_format not in PROMPT_FORMATS:
+        raise ValueError(f"Unsupported prompt_format: {prompt_format}.")
+
     problem_lines = "\n\n".join(
         f"Problem {idx}: {row['problem']}" for idx, row in enumerate(rows, start=1)
+    )
+    if prompt_format == "xml":
+        answer_lines = "\n".join(
+            f"<answer_{idx}>number</answer_{idx}>" for idx in range(1, len(rows) + 1)
+        )
+        return (
+            f"{problem_lines}\n\n"
+            "Solve each problem silently. Return only the final answers, with no "
+            "reasoning or extra text. Use exactly this XML format:\n\n"
+            "<answers>\n"
+            f"{answer_lines}\n"
+            "</answers>"
+        )
+
+    answer_lines = "\n".join(
+        f"Answer {idx}: <number>" for idx in range(1, len(rows) + 1)
     )
     return (
         f"{problem_lines}\n\n"
@@ -44,7 +61,7 @@ def build_packed_prompt(rows: list[dict[str, Any]]) -> str:
     )
 
 
-def pack_family(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def pack_family(rows: list[dict[str, Any]], prompt_format: str = "answer_lines") -> dict[str, Any]:
     if not rows:
         raise ValueError("Cannot pack an empty family.")
 
@@ -67,7 +84,8 @@ def pack_family(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "problems": [str(row["problem"]) for row in ordered],
         "gold_answers": [str(row["answer"]) for row in ordered],
         "metadata": [row.get("metadata", {}) for row in ordered],
-        "prompt": build_packed_prompt(ordered),
+        "prompt_format": prompt_format,
+        "prompt": build_packed_prompt(ordered, prompt_format=prompt_format),
     }
 
 
@@ -79,6 +97,7 @@ def pack_dataset(
     max_families: int | None = None,
     shuffle: bool = False,
     seed: int = 0,
+    prompt_format: str = "answer_lines",
 ) -> list[dict[str, Any]]:
     families = []
     for family_id, family_rows in group_by_family(rows).items():
@@ -97,7 +116,7 @@ def pack_dataset(
     if max_families is not None:
         families = families[:max_families]
 
-    return [pack_family(family_rows) for _, family_rows in families]
+    return [pack_family(family_rows, prompt_format=prompt_format) for _, family_rows in families]
 
 
 def build_packed_dataset(
@@ -109,6 +128,7 @@ def build_packed_dataset(
     max_families: int | None = None,
     shuffle: bool = False,
     seed: int = 0,
+    prompt_format: str = "answer_lines",
 ) -> None:
     packed = pack_dataset(
         read_jsonl(input_path),
@@ -118,6 +138,7 @@ def build_packed_dataset(
         max_families=max_families,
         shuffle=shuffle,
         seed=seed,
+        prompt_format=prompt_format,
     )
     write_jsonl(out, packed)
 
@@ -136,6 +157,12 @@ def main() -> None:
     parser.add_argument("--max-families", type=int, default=None)
     parser.add_argument("--shuffle", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--prompt-format",
+        choices=sorted(PROMPT_FORMATS),
+        default="answer_lines",
+        help="Packed answer format to request in the generated prompt.",
+    )
     args = parser.parse_args()
 
     build_packed_dataset(
@@ -147,6 +174,7 @@ def main() -> None:
         max_families=args.max_families,
         shuffle=args.shuffle,
         seed=args.seed,
+        prompt_format=args.prompt_format,
     )
 
 

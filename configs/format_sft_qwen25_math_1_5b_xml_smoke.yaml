@@ -1,0 +1,18 @@
+model_name: Qwen/Qwen2.5-Math-1.5B
+dataset_path: outputs/phase5/format_sft_pair_xml_train.jsonl
+output_dir: outputs/phase5/format_sft_qwen25_math_1_5b_xml_smoke
+device: auto
+seed: 13
+max_examples: 144
+max_steps: 20
+epochs: 10
+batch_size: 2
+gradient_accumulation_steps: 1
+learning_rate: 0.0002
+max_length: 768
+separator: "\n"
+lora:
+  enabled: true
+  r: 8
+  alpha: 16
+  dropout: 0.05

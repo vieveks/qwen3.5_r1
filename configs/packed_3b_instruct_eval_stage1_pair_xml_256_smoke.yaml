@@ -1,0 +1,11 @@
+model_name: Qwen/Qwen2.5-3B-Instruct
+dataset_path: outputs/phase5/packed_stage1_pair_xml_calibrated_train.jsonl
+output_path: outputs/phase5/packed_3b_instruct_stage1_pair_xml_256_smoke.jsonl
+max_examples: 8
+max_new_tokens: 256
+temperature: 0.0
+top_p: 1.0
+device: auto
+resume: false
+apply_chat_template: true
+system_prompt: "Solve the math problems. Return only the requested XML answer block with no reasoning or extra text."

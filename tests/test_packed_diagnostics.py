@@ -88,6 +88,37 @@ def test_clean_completion_is_not_suspicious():
     assert not diagnostics.suspicious
 
 
+def test_repeated_answers_are_not_suspicious_when_gold_repeats():
+    diagnostics = diagnose_packed_completion(
+        """
+        Answer 1: 11/5
+        Answer 2: 11/5
+        """,
+        ["11/5", "11/5"],
+    )
+
+    assert not diagnostics.repeated_answer
+    assert diagnostics.copied_answer_indices == []
+    assert not diagnostics.answer_count_mismatch
+    assert not diagnostics.suspicious
+
+
+def test_wrong_repeated_answers_for_repeated_gold_keep_offset_flag():
+    diagnostics = diagnose_packed_completion(
+        """
+        Answer 1: 100
+        Answer 2: 100
+        """,
+        ["32", "32"],
+    )
+
+    assert not diagnostics.repeated_answer
+    assert diagnostics.copied_answer_indices == []
+    assert diagnostics.same_wrong_additive_offset
+    assert diagnostics.same_wrong_multiplicative_offset
+    assert diagnostics.suspicious
+
+
 def test_diagnose_validates_parse_length():
     parsed = PackedAnswerParse(
         answers=["1"],

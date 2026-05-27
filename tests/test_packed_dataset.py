@@ -1,4 +1,5 @@
 from iso_rlvr.data.build_packed_dataset import (
+    build_packed_prompt,
     pack_dataset,
     pack_family,
     parse_family_types,
@@ -29,11 +30,37 @@ def test_pack_family_creates_stateless_trl_columns():
     assert packed["problems"] == ["Problem text 0?", "Problem text 1?"]
     assert packed["gold_answers"] == ["10", "11"]
     assert packed["metadata"] == [{"idx": 0}, {"idx": 1}]
+    assert packed["prompt_format"] == "answer_lines"
     assert "Return only the final answers" in packed["prompt"]
     assert "Problem 1: Problem text 0?" in packed["prompt"]
     assert "Problem 2: Problem text 1?" in packed["prompt"]
     assert "Answer 1: <number>" in packed["prompt"]
     assert "Answer 2: <number>" in packed["prompt"]
+
+
+def test_pack_family_can_create_xml_prompt_contract():
+    rows = [_row("fam_000001", 0), _row("fam_000001", 1)]
+
+    packed = pack_family(rows, prompt_format="xml")
+
+    assert packed["prompt_format"] == "xml"
+    assert "Use exactly this XML format" in packed["prompt"]
+    assert "<answers>" in packed["prompt"]
+    assert "<answer_1>number</answer_1>" in packed["prompt"]
+    assert "<answer_2>number</answer_2>" in packed["prompt"]
+    assert "</answers>" in packed["prompt"]
+    assert "Answer 1: <number>" not in packed["prompt"]
+
+
+def test_build_packed_prompt_rejects_unknown_prompt_format():
+    rows = [_row("fam_000001", 0)]
+
+    try:
+        build_packed_prompt(rows, prompt_format="json")
+    except ValueError as exc:
+        assert "Unsupported prompt_format" in str(exc)
+    else:
+        raise AssertionError("Expected unsupported prompt format to raise ValueError")
 
 
 def test_pack_dataset_filters_curriculum_family_types_and_variant_count():
@@ -49,9 +76,11 @@ def test_pack_dataset_filters_curriculum_family_types_and_variant_count():
         rows,
         include_family_types={"missing_average", "rational_linear_equation"},
         expected_variants=2,
+        prompt_format="xml",
     )
 
     assert [row["family_id"] for row in packed] == ["fam_000001"]
+    assert packed[0]["prompt_format"] == "xml"
 
 
 def test_pack_dataset_can_limit_variants_per_family_for_smoke_tests():

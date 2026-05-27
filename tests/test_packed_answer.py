@@ -21,6 +21,108 @@ def test_parse_canonical_answer_lines():
     assert parsed.complete
 
 
+def test_parse_xml_answer_block():
+    parsed = parse_packed_answers(
+        """
+        <answers>
+        <answer_1>3</answer_1>
+        <answer_2>7</answer_2>
+        </answers>
+        """,
+        expected_count=2,
+    )
+
+    assert parsed.answers == ["3", "7"]
+    assert parsed.missing_indices == []
+    assert parsed.extra_answers == []
+    assert parsed.mode == "xml"
+    assert parsed.complete
+
+
+def test_parse_xml_fraction_answers():
+    parsed = parse_packed_answers(
+        r"""
+        <answers>
+        <answer_1>16/5</answer_1>
+        <answer_2>\frac{-3}{7}</answer_2>
+        </answers>
+        """,
+        expected_count=2,
+    )
+
+    assert parsed.answers == ["16/5", "-3/7"]
+    assert parsed.complete
+
+
+def test_parse_xml_marks_missing_and_extra_answers():
+    parsed = parse_packed_answers(
+        """
+        <answers>
+        <answer_1>3</answer_1>
+        <answer_3>21</answer_3>
+        <answer_5>99</answer_5>
+        </answers>
+        """,
+        expected_count=4,
+    )
+
+    assert parsed.answers == ["3", None, "21", None]
+    assert parsed.missing_indices == [2, 4]
+    assert parsed.extra_answers == ["99"]
+    assert not parsed.complete
+
+
+def test_parse_xml_duplicate_answer_as_extra():
+    parsed = parse_packed_answers(
+        """
+        <answers>
+        <answer_1>3</answer_1>
+        <answer_1>4</answer_1>
+        <answer_2>5</answer_2>
+        </answers>
+        """,
+        expected_count=2,
+    )
+
+    assert parsed.answers == ["3", "5"]
+    assert parsed.extra_answers == ["4"]
+    assert not parsed.complete
+
+
+def test_parse_xml_rejects_prose_inside_answer_tag():
+    parsed = parse_packed_answers(
+        """
+        <answers>
+        <answer_1>the answer is 3</answer_1>
+        <answer_2>7</answer_2>
+        </answers>
+        """,
+        expected_count=2,
+    )
+
+    assert parsed.answers == [None, "7"]
+    assert parsed.missing_indices == [1]
+    assert not parsed.complete
+
+
+def test_parse_xml_attempt_does_not_fall_back_to_boxed_or_indexed_answers():
+    parsed = parse_packed_answers(
+        r"""
+        <answers>
+        <answer_1>the answer is \boxed{3}</answer_1>
+        </answers>
+
+        Answer 1: 3
+        Answer 2: 7
+        """,
+        expected_count=2,
+    )
+
+    assert parsed.answers == [None, None]
+    assert parsed.mode == "xml"
+    assert not parsed.complete
+
+
 def test_parse_marks_missing_and_extra_indexed_answers():
     parsed = parse_packed_answers(
         """
