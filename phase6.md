@@ -627,6 +627,136 @@ Conclusion:
 
 The first proper TRL comparison supports continuing Phase 6. Next step should be a confirmation run with either a second seed or a modestly larger heldout/eval set before sweeping `lambda_iso`.
 
+### Experiment 6.5: Second-Seed Confirmation Matrix
+
+Goal:
+
+```text
+Check whether the iso family-accuracy advantage replicates with a different seed.
+```
+
+Design:
+
+```text
+Same model initialization
+Same train dataset
+Same heldout eval dataset
+Same steps
+Same generation settings
+Same rewards
+Different seed: 37
+```
+
+Configs:
+
+```text
+Independent: configs/packed_grpo_trl_all_traces_independent_30step_seed_37.yaml
+Iso: configs/packed_grpo_trl_all_traces_iso_lam_0_50_30step_seed_37.yaml
+```
+
+Independent seed 37 result:
+
+```text
+Output: outputs/phase6/packed_grpo_trl_all_traces_independent_30step_seed_37
+accuracy: 0.7188
+family_accuracy: 0.5625
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+reward_mean: 0.7612
+reward_std: 0.3617
+sampled contrast steps: 14 / 30
+sampled malformed completions: 0
+```
+
+Independent seed 37 by family type:
+
+| Family type | Accuracy | Family accuracy |
+| --- | ---: | ---: |
+| `missing_average` | 0.9167 | 0.8333 |
+| `rational_linear_equation` | 0.6000 | 0.4000 |
+
+Iso seed 37 result:
+
+```text
+Output: outputs/phase6/packed_grpo_trl_all_traces_iso_lam_0_50_30step_seed_37
+accuracy: 0.7500
+family_accuracy: 0.6250
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+reward_mean: 1.1217
+reward_std: 0.5775
+sampled contrast steps: 14 / 30
+sampled malformed completions: 0
+```
+
+Iso seed 37 by family type:
+
+| Family type | Accuracy | Family accuracy |
+| --- | ---: | ---: |
+| `missing_average` | 1.0000 | 1.0000 |
+| `rational_linear_equation` | 0.6000 | 0.4000 |
+
+Seed 37 matrix comparison:
+
+| Metric | Independent | Iso `lambda_iso=0.50` | Delta |
+| --- | ---: | ---: | ---: |
+| Accuracy | 0.7188 | 0.7500 | +0.0312 |
+| Family accuracy | 0.5625 | 0.6250 | +0.0625 |
+| Parse complete | 1.0000 | 1.0000 | 0.0000 |
+| Mismatch rate | 0.0000 | 0.0000 | 0.0000 |
+| Suspicious rate | 0.0000 | 0.0000 | 0.0000 |
+| Sampled contrast steps | 14 / 30 | 14 / 30 | 0 |
+| Sampled malformed completions | 0 | 0 | 0 |
+
+Contrast prompt groups:
+
+```text
+Independent seed 37:
+fam_000027, fam_000032, fam_000037, fam_000045, fam_000050,
+fam_000086, fam_000098, fam_000106, fam_000114, fam_000119,
+fam_000134, fam_000136, fam_000161, fam_000184
+
+Iso seed 37:
+fam_000027, fam_000032, fam_000037, fam_000045, fam_000050,
+fam_000086, fam_000098, fam_000106, fam_000114, fam_000119,
+fam_000134, fam_000136, fam_000161, fam_000184
+```
+
+The seed 37 contrast-driver groups were identical across arms. That means the replicated heldout improvement is not explained by iso and independent receiving contrast from different prompt groups in this run.
+
+Two-seed summary:
+
+| Seed | Independent family accuracy | Iso family accuracy | Delta | Parse stable |
+| ---: | ---: | ---: | ---: | --- |
+| 23 | 0.5625 | 0.6250 | +0.0625 | yes |
+| 37 | 0.5625 | 0.6250 | +0.0625 | yes |
+
+Interpretation:
+
+The iso advantage replicated in direction and magnitude on a second seed while preserving the reward interface:
+
+```text
+parse_complete_rate: 1.0000 in all four runs
+answer_count_mismatch_rate: 0.0000 in all four runs
+suspicious_rate: 0.0000 in all four runs
+sampled malformed completions: 0 in all four runs
+```
+
+This is still a small heldout set, but the result is now stronger than a one-off. The first clean Phase 6 evidence supports the Iso-RLVR hypothesis on the stabilized packed XML interface.
+
+The mechanism remains narrow:
+
+```text
+missing_average improves under iso
+rational_linear_equation stays flat
+```
+
+Conclusion:
+
+The confirmation run supports continuing toward a broader evaluation. The next best step is not a `lambda_iso` sweep yet; it is a larger or more reliable evaluation surface so the family-accuracy gap is measured with less variance.
+
 ## First Smoke Pass Condition
 
 The first TRL smoke passes if:
@@ -643,21 +773,22 @@ It does not need to improve accuracy.
 
 ## Current Recommendation
 
-The proper TRL GRPO smoke has passed, and the first independent-versus-iso matrix is directionally positive for iso reward:
+The proper TRL GRPO smoke has passed, and the independent-versus-iso matrix replicated on a second seed:
 
 ```text
-family_accuracy delta: +0.0625
+seed 23 family_accuracy delta: +0.0625
+seed 37 family_accuracy delta: +0.0625
 parse_complete_rate delta: 0.0000
-sampled malformed completions: 0 in both arms
+sampled malformed completions: 0 in all arms
 ```
 
-Do not sweep `lambda_iso` yet. The next highest-value check is a confirmation run with a second seed or a larger heldout/eval set. The `rational_linear_equation` baseline is still known and should be improved later as a targeted recovery workstream.
+Do not sweep `lambda_iso` yet. The next highest-value check is a larger or more reliable heldout/eval surface. The `rational_linear_equation` baseline is still known and should be improved later as a targeted recovery workstream.
 
 The current Phase 6 thesis:
 
 ```text
 Same stable reward interface.
 Real GRPO trainer confirmed.
-First Iso-RLVR comparison is directionally positive.
-Confirm before sweeping.
+Iso-RLVR comparison replicated on two seeds.
+Broaden evaluation before sweeping.
 ```
