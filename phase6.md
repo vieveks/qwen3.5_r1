@@ -757,6 +757,136 @@ Conclusion:
 
 The confirmation run supports continuing toward a broader evaluation. The next best step is not a `lambda_iso` sweep yet; it is a larger or more reliable evaluation surface so the family-accuracy gap is measured with less variance.
 
+### Experiment 6.6: Broad Heldout Eval Across Calibrated Family Types
+
+Goal:
+
+```text
+Evaluate the already-trained seed 23 independent and iso adapters on a broader heldout surface before sweeping lambda_iso.
+```
+
+This is an evaluation-only experiment. No new training was run.
+
+Dataset:
+
+```text
+Source: data/iso_math_calibrated_heldout_clean.jsonl
+Packed output: outputs/phase6/packed_calibrated_heldout_clean_xml_pair_64_seed0.jsonl
+Prompt format: xml
+Families: 64
+Variants per family: 2
+Seed: 0
+```
+
+Family-type counts:
+
+| Family type | Examples |
+| --- | ---: |
+| `chinese_remainder` | 11 |
+| `missing_average` | 19 |
+| `rational_linear_equation` | 28 |
+| `rational_system_target` | 6 |
+
+Configs:
+
+```text
+Independent: configs/packed_eval_phase6_broad_independent_seed23.yaml
+Iso: configs/packed_eval_phase6_broad_iso_seed23.yaml
+```
+
+Independent seed 23 broad eval:
+
+```text
+Output: outputs/phase6/packed_eval_broad_independent_seed23.jsonl
+accuracy: 0.5625
+family_accuracy: 0.4531
+parse_complete_rate: 0.9063
+answer_count_mismatch_rate: 0.0938
+suspicious_rate: 0.1250
+avg_reward: 0.8248
+```
+
+Independent by family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Suspicious |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 0.0909 |
+| `missing_average` | 0.8684 | 0.7895 | 1.0000 | 0.0000 | 0.0526 |
+| `rational_linear_equation` | 0.6964 | 0.5000 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_system_target` | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 |
+
+Iso seed 23 broad eval:
+
+```text
+Output: outputs/phase6/packed_eval_broad_iso_seed23.jsonl
+accuracy: 0.5625
+family_accuracy: 0.4375
+parse_complete_rate: 0.8906
+answer_count_mismatch_rate: 0.1094
+suspicious_rate: 0.1250
+avg_reward: 0.8175
+```
+
+Iso by family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Suspicious |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 0.0000 | 0.0000 | 0.9091 | 0.0909 | 0.1818 |
+| `missing_average` | 0.8684 | 0.7368 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_linear_equation` | 0.6964 | 0.5000 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_system_target` | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 |
+
+Broad comparison:
+
+| Metric | Independent | Iso `lambda_iso=0.50` | Delta |
+| --- | ---: | ---: | ---: |
+| Accuracy | 0.5625 | 0.5625 | 0.0000 |
+| Family accuracy | 0.4531 | 0.4375 | -0.0156 |
+| Parse complete | 0.9063 | 0.8906 | -0.0157 |
+| Mismatch rate | 0.0938 | 0.1094 | +0.0156 |
+| Suspicious rate | 0.1250 | 0.1250 | 0.0000 |
+
+Representative malformed `rational_system_target` behavior:
+
+```text
+Gold: ["-16/5", "-16/5"]
+Failure: visible algebra trace loops until the token cap and never emits XML.
+Parsed: [null, null]
+```
+
+Representative malformed `chinese_remainder` behavior in the iso arm:
+
+```xml
+<answers>
+<answer_1>1</answer_1>
+<answer_2>no solution</answer_2>
+</answers>
+```
+
+The parser correctly rejects `no solution` because the current answer contract only accepts numeric values.
+
+Interpretation:
+
+The broad eval does not support a lambda sweep yet. It surfaced a stronger blocker:
+
+```text
+the packed XML interface does not yet generalize to all calibrated family types
+```
+
+The two-seed Iso-RLVR result remains valid for the stabilized two-family surface. But the broad surface is not clean because both arms fail the parse gate:
+
+```text
+independent parse_complete_rate: 0.9063
+iso parse_complete_rate: 0.8906
+target: >= 0.9500
+```
+
+The failure is concentrated in `rational_system_target`, which was not part of the Phase 5 all-traces SFT bridge. The model falls into long system-solving traces and fails to terminate with XML. `chinese_remainder` is mostly parse-complete but has zero accuracy, and the iso arm has one non-numeric answer-tag failure.
+
+Conclusion:
+
+Do not sweep `lambda_iso` yet. The next step should be broad-interface stabilization: add deterministic trace coverage or another bridge for the heldout calibrated family types, then rerun this broad eval. The clean two-family result is real, but it is not yet a generalization result across unseen family types.
+
 ## First Smoke Pass Condition
 
 The first TRL smoke passes if:
@@ -773,7 +903,7 @@ It does not need to improve accuracy.
 
 ## Current Recommendation
 
-The proper TRL GRPO smoke has passed, and the independent-versus-iso matrix replicated on a second seed:
+The proper TRL GRPO smoke has passed, and the independent-versus-iso matrix replicated on a second seed on the stabilized two-family surface:
 
 ```text
 seed 23 family_accuracy delta: +0.0625
@@ -782,7 +912,17 @@ parse_complete_rate delta: 0.0000
 sampled malformed completions: 0 in all arms
 ```
 
-Do not sweep `lambda_iso` yet. The next highest-value check is a larger or more reliable heldout/eval surface. The `rational_linear_equation` baseline is still known and should be improved later as a targeted recovery workstream.
+The broad all-family eval changed the next action. It showed that the current packed XML interface does not yet generalize to unseen calibrated family types:
+
+```text
+broad independent parse_complete_rate: 0.9063
+broad iso parse_complete_rate: 0.8906
+rational_system_target parse_complete_rate: 0.0000 in both arms
+```
+
+Do not sweep `lambda_iso` yet. First stabilize the broad interface by adding trace or format-bridge coverage for the heldout calibrated family types, especially `rational_system_target`. Then rerun the broad eval before any reward sweep.
+
+The `rational_linear_equation` baseline is still known and should be improved later as a targeted recovery workstream, but the immediate blocker is broader family-type interface stability.
 
 The current Phase 6 thesis:
 
@@ -790,5 +930,6 @@ The current Phase 6 thesis:
 Same stable reward interface.
 Real GRPO trainer confirmed.
 Iso-RLVR comparison replicated on two seeds.
-Broaden evaluation before sweeping.
+Broad eval exposed unseen-family interface gaps.
+Stabilize broad family coverage before sweeping.
 ```
