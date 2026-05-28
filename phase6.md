@@ -273,6 +273,66 @@ For malformed outputs, full completions matter because these cases need differen
 8. Compare TRL smoke interface metrics against Phase 5 GRPO-lite smoke.
 9. Update this document with results.
 
+## Phase 6 Experiments
+
+### Experiment 6.1: TRL Availability And Reward Adapter Preflight
+
+Goal:
+
+```text
+Verify the local TRL situation and test the packed reward adapter before trainer wiring.
+```
+
+TRL check:
+
+```text
+Command: conda run -n pytorch_5070ti python -c "import trl; print(trl.__version__)"
+Result: ModuleNotFoundError: No module named 'trl'
+```
+
+Conclusion:
+
+```text
+TRL is not installed in the current pytorch_5070ti environment.
+```
+
+This means we cannot safely target a concrete `GRPOTrainer` API yet. The next trainer implementation step is to install TRL, record the exact installed version, and then check the local `GRPOTrainer` and `GRPOConfig` signatures before writing trainer code.
+
+Reward adapter implemented:
+
+```text
+Module: src/iso_rlvr/train/packed_grpo_trl.py
+Tests: tests/test_packed_grpo_trl.py
+```
+
+The adapter intentionally does not import TRL. It provides:
+
+```text
+packed_trl_reward_config
+packed_trl_rewards
+make_packed_trl_reward_func
+```
+
+The unit tests verify that the reward adapter:
+
+- accepts plain string completions
+- accepts chat-style completion dictionaries
+- accepts dataset columns as keyword arguments
+- uses `gold_answers` as the stateless reward source
+- accepts optional `completion_ids` for length penalty
+- rejects mismatched input lengths
+- keeps family bonus disabled by default
+
+Targeted test result:
+
+```text
+tests/test_packed_grpo_trl.py: 5 passed
+```
+
+Conclusion:
+
+The stateless packed reward path is ready for TRL integration, but the trainer itself is blocked on installing and inspecting the exact TRL version.
+
 ## First Smoke Pass Condition
 
 The first TRL smoke passes if:
