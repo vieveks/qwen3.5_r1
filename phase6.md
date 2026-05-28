@@ -296,7 +296,7 @@ Conclusion:
 TRL is not installed in the current pytorch_5070ti environment.
 ```
 
-This means we cannot safely target a concrete `GRPOTrainer` API yet. The next trainer implementation step is to install TRL, record the exact installed version, and then check the local `GRPOTrainer` and `GRPOConfig` signatures before writing trainer code.
+This meant we could not safely target a concrete `GRPOTrainer` API until installing and inspecting the exact local TRL version.
 
 Reward adapter implemented:
 
@@ -305,7 +305,7 @@ Module: src/iso_rlvr/train/packed_grpo_trl.py
 Tests: tests/test_packed_grpo_trl.py
 ```
 
-The adapter intentionally does not import TRL. It provides:
+The first reward-adapter preflight verified:
 
 ```text
 packed_trl_reward_config
@@ -331,7 +331,174 @@ tests/test_packed_grpo_trl.py: 5 passed
 
 Conclusion:
 
-The stateless packed reward path is ready for TRL integration, but the trainer itself is blocked on installing and inspecting the exact TRL version.
+The stateless packed reward path was ready before trainer wiring. The next step was installing and inspecting TRL.
+
+### Experiment 6.2: TRL Installation And API Inspection
+
+Goal:
+
+```text
+Install TRL, record the exact local API, and implement the real packed GRPOTrainer path.
+```
+
+Installed environment:
+
+```text
+Environment: pytorch_5070ti
+trl: 0.17.0
+transformers: 5.0.0.dev0
+accelerate: 1.10.0
+datasets: 4.0.0
+peft: 0.17.0
+```
+
+Local API check:
+
+```text
+GRPOTrainer.__init__(model, reward_funcs, args, train_dataset, eval_dataset, processing_class, reward_processing_classes, callbacks, optimizers, peft_config)
+GRPOConfig includes num_generations: true
+GRPOConfig includes beta: true
+```
+
+Important local behavior:
+
+```text
+TRL 0.17.0 passes reward functions:
+reward_func(prompts=prompts, completions=completions, **dataset_columns)
+```
+
+The dataset column names therefore matter directly. A row column named `gold_answers` arrives at the reward function as `gold_answers=...`.
+
+Implementation:
+
+```text
+Trainer: src/iso_rlvr/train/packed_grpo_trl.py
+Config: configs/packed_grpo_trl_all_traces_smoke.yaml
+Dependency: trl==0.17.0
+```
+
+The trainer now:
+
+- loads the base model
+- loads the Phase 5 all-traces LoRA adapter as trainable
+- wraps `score_packed_completion` as a stateless TRL reward function
+- logs per-call sampled reward records to `reward_calls.jsonl`
+- logs per-prompt reward distributions for the sampled group
+- saves the trained adapter
+- runs a final packed heldout eval after training
+
+Targeted test result:
+
+```text
+tests/test_packed_grpo_trl.py: 5 passed
+```
+
+Conclusion:
+
+The real TRL trainer path is implemented against the installed local `trl==0.17.0` API.
+
+### Experiment 6.3: Tiny TRL GRPOTrainer Smoke
+
+Goal:
+
+```text
+Verify that proper TRL GRPOTrainer preserves the stabilized packed XML reward interface.
+```
+
+Config:
+
+```text
+Config: configs/packed_grpo_trl_all_traces_smoke.yaml
+Base model: Qwen/Qwen2.5-Math-1.5B
+Initial adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+Train dataset: outputs/phase5/packed_stage1_pair_xml_all_traces_train.jsonl
+Eval dataset: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+Output: outputs/phase6/packed_grpo_trl_all_traces_smoke
+TRL: 0.17.0
+Steps: 10
+Per-device train batch size: 4
+Num generations: 4
+Temperature: 0.7
+Max completion length: 256
+Learning rate: 1e-6
+Beta: 0.04
+Reward: packed correctness plus format signal only; family bonus disabled
+```
+
+Implementation note:
+
+The first run completed TRL training but failed after saving because final heldout eval expected `max_new_tokens` while the TRL config used `max_completion_length`. The trainer now maps `max_completion_length` to `max_new_tokens` for final eval, and the rerun completed.
+
+Sampled training-batch result:
+
+```text
+reward calls: 10
+sampled completions: 40
+parse_complete_rate: 1.0000 on every sampled batch
+answer_count_mismatch_rate: 0.0000 on every sampled batch
+suspicious_rate: 0.0000 on every sampled batch
+malformed samples: 0
+steps with within-prompt contrast: 5 / 10
+```
+
+Training reward-call summary:
+
+| Step | Reward mean | Reward std | Contrast prompts | Parse complete | Mismatch | Suspicious |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.0500 | 0.0000 | 0 | 1.0000 | 0.0000 | 0.0000 |
+| 2 | 0.9218 | 0.2220 | 1 | 1.0000 | 0.0000 | 0.0000 |
+| 3 | 0.6659 | 0.2218 | 1 | 1.0000 | 0.0000 | 0.0000 |
+| 4 | 0.7940 | 0.2560 | 1 | 1.0000 | 0.0000 | 0.0000 |
+| 5 | 0.5371 | 0.0003 | 0 | 1.0000 | 0.0000 | 0.0000 |
+| 6 | 1.0500 | 0.0000 | 0 | 1.0000 | 0.0000 | 0.0000 |
+| 7 | 1.0500 | 0.0000 | 0 | 1.0000 | 0.0000 | 0.0000 |
+| 8 | 0.6620 | 0.2240 | 1 | 1.0000 | 0.0000 | 0.0000 |
+| 9 | 0.7939 | 0.2561 | 1 | 1.0000 | 0.0000 | 0.0000 |
+| 10 | 1.0500 | 0.0000 | 0 | 1.0000 | 0.0000 | 0.0000 |
+
+Trainer summary:
+
+```text
+train_runtime: 81.22 seconds
+train_loss: 0.02255
+```
+
+Final heldout eval after saving:
+
+```text
+accuracy: 0.7188
+family_accuracy: 0.5625
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+reward_mean: 0.7612
+reward_std: 0.3616
+```
+
+By family type on final heldout:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Suspicious |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.9167 | 0.8333 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_linear_equation` | 0.6000 | 0.4000 | 1.0000 | 0.0000 | 0.0000 |
+
+Interpretation:
+
+The first proper TRL smoke passed the trainer-stability gate. The XML interface stayed stable under real `GRPOTrainer` updates:
+
+```text
+sampled parse_complete_rate: 1.0000
+post-update heldout parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+malformed samples: 0
+```
+
+As expected, this 10-step smoke should not be treated as capability improvement. Final heldout accuracy was `0.7188`, slightly below the all-traces starting baseline of `0.7500`, and `rational_linear_equation` stayed at `0.6000`.
+
+Conclusion:
+
+Phase 6 now has a working proper TRL GRPOTrainer path. The next experiment should be the clean independent-versus-iso reward comparison matrix on this packed XML interface.
 
 ## First Smoke Pass Condition
 
@@ -349,14 +516,14 @@ It does not need to improve accuracy.
 
 ## Current Recommendation
 
-Phase 6 should start with proper TRL GRPO integration from the Phase 5 all-traces adapter.
+The proper TRL GRPO smoke has passed. Phase 6 should now move to the independent-versus-iso reward comparison matrix from the same Phase 5 all-traces adapter initialization.
 
-Do not tune `lambda_iso`, rational-linear traces, or the reward family bonus until a tiny TRL smoke proves that the production trainer preserves the stabilized XML interface.
+Do not tune rational-linear traces before the first clean reward comparison. The `rational_linear_equation` baseline is known and should be improved later as a targeted recovery workstream.
 
-The first Phase 6 thesis:
+The current Phase 6 thesis:
 
 ```text
 Same stable reward interface.
-Real GRPO trainer.
-Then rerun Iso-RLVR comparisons.
+Real GRPO trainer confirmed.
+Now rerun Iso-RLVR comparisons.
 ```
