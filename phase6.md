@@ -500,6 +500,133 @@ Conclusion:
 
 Phase 6 now has a working proper TRL GRPOTrainer path. The next experiment should be the clean independent-versus-iso reward comparison matrix on this packed XML interface.
 
+### Experiment 6.4: Independent Versus Iso TRL Matrix
+
+Goal:
+
+```text
+Run the first clean Phase 6 comparison between independent packed GRPO and iso-reward packed GRPO.
+```
+
+Design:
+
+```text
+Trainer: TRL GRPOTrainer
+Base model: Qwen/Qwen2.5-Math-1.5B
+Initialization for both arms: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+Train dataset: outputs/phase5/packed_stage1_pair_xml_all_traces_train.jsonl
+Eval dataset: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+Seed: 23 for both arms
+Steps: 30
+Num generations: 4
+Temperature: 0.7
+Max completion length: 256
+Learning rate: 1e-6
+Beta: 0.04
+```
+
+Important:
+
+Both arms start from the untouched Phase 5 all-traces adapter. They do not start from the 10-step TRL smoke output. The TRL-smoke checkpoint is a trainer-validation artifact, not the matrix initialization.
+
+Configs:
+
+```text
+Independent: configs/packed_grpo_trl_all_traces_independent_30step.yaml
+Iso: configs/packed_grpo_trl_all_traces_iso_lam_0_50_30step.yaml
+```
+
+Reward settings:
+
+| Arm | Family bonus | Family weights |
+| --- | --- | --- |
+| Independent | disabled | `0.00 + 0.00` |
+| Iso | enabled | `family_mean_weight=0.25`, `all_family_correct_weight=0.25` |
+
+The iso arm corresponds to the planned first `lambda_iso=0.50` scale: a fully correct packed family receives a total family bonus of `0.50` on correct variants.
+
+Run order:
+
+```text
+Independent first, fully evaluated.
+Iso second, with the independent result locked.
+```
+
+Independent result:
+
+```text
+Output: outputs/phase6/packed_grpo_trl_all_traces_independent_30step
+accuracy: 0.7188
+family_accuracy: 0.5625
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+reward_mean: 0.7612
+reward_std: 0.3616
+sampled contrast steps: 10 / 30
+sampled malformed completions: 0
+```
+
+Independent by family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Suspicious |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.9167 | 0.8333 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_linear_equation` | 0.6000 | 0.4000 | 1.0000 | 0.0000 | 0.0000 |
+
+Iso result:
+
+```text
+Output: outputs/phase6/packed_grpo_trl_all_traces_iso_lam_0_50_30step
+accuracy: 0.7500
+family_accuracy: 0.6250
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+reward_mean: 1.1217
+reward_std: 0.5775
+sampled contrast steps: 12 / 30
+sampled malformed completions: 0
+```
+
+Iso by family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Suspicious |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_linear_equation` | 0.6000 | 0.4000 | 1.0000 | 0.0000 | 0.0000 |
+
+Matrix comparison:
+
+| Metric | Independent | Iso `lambda_iso=0.50` | Delta |
+| --- | ---: | ---: | ---: |
+| Accuracy | 0.7188 | 0.7500 | +0.0312 |
+| Family accuracy | 0.5625 | 0.6250 | +0.0625 |
+| Parse complete | 1.0000 | 1.0000 | 0.0000 |
+| Mismatch rate | 0.0000 | 0.0000 | 0.0000 |
+| Suspicious rate | 0.0000 | 0.0000 | 0.0000 |
+| Sampled contrast steps | 10 / 30 | 12 / 30 | +2 |
+| Sampled malformed completions | 0 | 0 | 0 |
+
+Interpretation:
+
+This is the first clean support for the Iso-RLVR hypothesis on the stabilized packed XML interface. The iso arm improved family accuracy by `+0.0625` without any parse regression:
+
+```text
+parse_complete_rate: 1.0000 in both arms
+answer_count_mismatch_rate: 0.0000 in both arms
+suspicious_rate: 0.0000 in both arms
+sampled malformed completions: 0 in both arms
+```
+
+The improvement is small and the heldout set is still tiny, so it should not be overclaimed. But the direction is correct, and it is now measured on the clean reward interface that Phase 5 built.
+
+The improvement came from `missing_average`, where iso reached perfect heldout performance. `rational_linear_equation` remained flat at `0.6000` accuracy and `0.4000` family accuracy in both arms. That confirms the rational-linear stall is not fixed by the current iso reward and should remain a separate recovery workstream.
+
+Conclusion:
+
+The first proper TRL comparison supports continuing Phase 6. Next step should be a confirmation run with either a second seed or a modestly larger heldout/eval set before sweeping `lambda_iso`.
+
 ## First Smoke Pass Condition
 
 The first TRL smoke passes if:
@@ -516,14 +643,21 @@ It does not need to improve accuracy.
 
 ## Current Recommendation
 
-The proper TRL GRPO smoke has passed. Phase 6 should now move to the independent-versus-iso reward comparison matrix from the same Phase 5 all-traces adapter initialization.
+The proper TRL GRPO smoke has passed, and the first independent-versus-iso matrix is directionally positive for iso reward:
 
-Do not tune rational-linear traces before the first clean reward comparison. The `rational_linear_equation` baseline is known and should be improved later as a targeted recovery workstream.
+```text
+family_accuracy delta: +0.0625
+parse_complete_rate delta: 0.0000
+sampled malformed completions: 0 in both arms
+```
+
+Do not sweep `lambda_iso` yet. The next highest-value check is a confirmation run with a second seed or a larger heldout/eval set. The `rational_linear_equation` baseline is still known and should be improved later as a targeted recovery workstream.
 
 The current Phase 6 thesis:
 
 ```text
 Same stable reward interface.
 Real GRPO trainer confirmed.
-Now rerun Iso-RLVR comparisons.
+First Iso-RLVR comparison is directionally positive.
+Confirm before sweeping.
 ```
