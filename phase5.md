@@ -1502,6 +1502,118 @@ contrast_prompt_count: 3
 
 The contrast condition matters. It means at least three prompts have both correct and incorrect sampled completions, so prompt-level GRPO has a real within-group learning signal. Phase 5 can now proceed to a tiny packed GRPO smoke. The smoke should still use pure correctness plus format reward first; defer the isomorphic family bonus to Phase 6 or a later controlled comparison.
 
+### Experiment 5.15: Tiny Packed GRPO-Lite Smoke
+
+Goal:
+
+```text
+Check whether a few local GRPO-style updates preserve the packed XML reward interface.
+```
+
+Implementation:
+
+```text
+Trainer: src/iso_rlvr/train/packed_grpo_lite.py
+Config: configs/packed_grpo_lite_all_traces_smoke.yaml
+Base model: Qwen/Qwen2.5-Math-1.5B
+Initial adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+Train dataset: outputs/phase5/packed_stage1_pair_xml_all_traces_train.jsonl
+Eval dataset: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+Output: outputs/phase5/packed_grpo_lite_all_traces_smoke
+Steps: 10
+Prompts per step: 1
+Samples per prompt: 4
+Temperature: 0.7
+Max new tokens: 256
+Learning rate: 1e-6
+Reward: packed correctness plus format signal only; family bonus disabled
+```
+
+This is not a production TRL integration. It is a local smoke that loads the all-traces LoRA adapter, samples grouped completions, scores each completion with `score_packed_completion`, normalizes advantages within each prompt group, and applies a small policy-gradient update to the adapter.
+
+Sampled training-batch result:
+
+```text
+steps: 10
+parse_complete_rate: 1.0000 on every sampled batch
+answer_count_mismatch_rate: 0.0000 on every sampled batch
+suspicious_rate: 0.0000 on every sampled batch
+steps with within-prompt contrast: 4 / 10
+steps with nonzero advantage std: 4 / 10
+```
+
+Training-step summary:
+
+| Step | Accuracy | Reward mean | Reward std | Contrast prompts | Loss |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 1.0000 | 1.0500 | 0.0000 | 0 | 0.000000 |
+| 1 | 0.8750 | 0.9206 | 0.2241 | 1 | -0.007562 |
+| 2 | 0.5000 | 0.5382 | 0.0000 | 0 | 0.000000 |
+| 3 | 1.0000 | 1.0500 | 0.0000 | 0 | 0.000000 |
+| 4 | 1.0000 | 1.0500 | 0.0000 | 0 | 0.000000 |
+| 5 | 0.8750 | 0.9203 | 0.2246 | 1 | -0.005640 |
+| 6 | 1.0000 | 1.0500 | 0.0000 | 0 | 0.000000 |
+| 7 | 0.6250 | 0.6653 | 0.2221 | 1 | -0.003823 |
+| 8 | 1.0000 | 1.0500 | 0.0000 | 0 | 0.000000 |
+| 9 | 0.7500 | 0.7914 | 0.2586 | 1 | -0.003304 |
+
+Heldout eval after step 5:
+
+```text
+accuracy: 0.7188
+family_accuracy: 0.5625
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+reward_mean: 0.7612
+reward_std: 0.3616
+```
+
+Heldout eval after step 10:
+
+```text
+accuracy: 0.7500
+family_accuracy: 0.6250
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+reward_mean: 0.7936
+reward_std: 0.3629
+```
+
+Final heldout eval after saving:
+
+```text
+accuracy: 0.7188
+family_accuracy: 0.5625
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+reward_mean: 0.7612
+reward_std: 0.3617
+```
+
+By family type on final heldout:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch rate | Suspicious rate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.9167 | 0.8333 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_linear_equation` | 0.6000 | 0.4000 | 1.0000 | 0.0000 | 0.0000 |
+
+Interpretation:
+
+The smoke passed the interface-stability test. Ten local GRPO-style updates did not damage the XML contract under sampled training batches or heldout eval:
+
+```text
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+```
+
+The smoke did not demonstrate meaningful learning yet. With one prompt per step and four completions per prompt, only four of ten training batches had within-prompt reward contrast; the other six batches had zero normalized advantage and therefore near-zero gradient. This is acceptable for a smoke because the purpose was to test whether RL updates are safe against the stabilized interface.
+
+The final heldout accuracy is slightly below the all-traces greedy baseline (`0.7188` vs `0.7500`) and rational-linear accuracy stayed flat at `0.6000`. Treat this as neutral on capability and positive on interface stability. Phase 5 has now shown that packed XML rewards can support sampled rollouts and small RL updates without parser collapse.
+
 ## Recommended Immediate Order
 
 1. Implement XML parser and tests. Done.
@@ -1523,7 +1635,8 @@ The contrast condition matters. It means at least three prompts have both correc
 17. Build a mixed-v2 bridge that keeps missing-average traces but increases answer-only pressure, especially for rational-linear rows. Done; worse than mixed-v1.
 18. Add deterministic rational-linear traces or another targeted loop control. Done; all-traces fixed parse completeness but reduced rational-linear accuracy.
 19. Run sampled rollout audit from the all-traces adapter before training. Done; passed the audit gate.
-20. Run a tiny GRPO smoke from the all-traces adapter. Next.
+20. Run a tiny GRPO smoke from the all-traces adapter. Done; interface stayed stable, learning signal was sparse.
+21. Move production GRPO integration and isomorphic-family reward experiments to Phase 6. Next.
 
 ## What We Should Ask The Critic
 
@@ -1580,12 +1693,18 @@ reward_std: 0.3943
 contrast_prompt_count: 3
 ```
 
-Run only a tiny GRPO smoke first, not full training. The smoke should use pure correctness plus format reward, with family bonus disabled. It should verify that:
+The tiny packed GRPO-lite smoke then confirmed that the interface remains stable after local RL-style updates:
 
-1. Parse completeness remains high after a few RL updates.
-2. Reward variance remains non-degenerate within prompt groups.
-3. Rational-linear arithmetic improves or at least does not collapse.
-4. The XML interface does not regress under sampled training.
+```text
+steps: 10
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+final_accuracy: 0.7188
+final_reward_std: 0.3617
+```
+
+The smoke should not be overread as capability improvement. Only four of ten sampled training batches had within-prompt contrast, so most steps had no useful gradient. But it answers the Phase 5 question: the reward interface is now reliable enough for RL experiments. Full TRL integration, larger grouped batches, more samples per prompt, and the isomorphic family bonus should move to Phase 6 as controlled experiments.
 
 The 3B-Instruct smoke confirms the XML contract is viable, but the model's low math accuracy makes it a poor main RL target for this project.
 
