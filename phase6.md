@@ -1089,6 +1089,90 @@ Conclusion:
 
 The broad parser interface is repaired enough for deterministic eval and mostly stable under sampling. The next blocker is capability/contrast for the new family types, especially `chinese_remainder`. Do not run the broad independent-versus-iso GRPO matrix until at least one new family type has non-trivial sampled correctness and prompt-level contrast.
 
+### Experiment 6.9: Planned New-Family Capability Bridge
+
+Goal:
+
+```text
+Turn the now-parse-stable new family types into useful RL targets.
+```
+
+Current diagnosis:
+
+```text
+The XML interface is no longer the blocker across all four families.
+The blocker is that the new family types do not produce useful correctness or contrast.
+```
+
+Observed state after the broad bridge:
+
+| Family type | Deterministic accuracy | Sampled accuracy | Sampled contrast |
+| --- | ---: | ---: | --- |
+| `chinese_remainder` | 0.0000 | 0.0000 | none |
+| `rational_system_target` | 0.0833 | 0.0000 | none |
+
+Interpretation:
+
+`chinese_remainder` failed because the first broad trace mostly stated/checks the known answer. That repairs formatting but does not teach a reusable constructive method. The model needs a short algorithm it can imitate:
+
+```text
+Given x = r1 mod m1 and x = r2 mod m2:
+start at r1
+step by m1
+check mod m2
+stop when the second congruence matches
+```
+
+Target trace shape:
+
+```text
+Problem 1 start: x = 3
+Problem 1 step by first modulus: +5
+Problem 1 candidates: 3, 8, 13, 18, 23
+Problem 1 check: 23 mod 7 = 2
+Problem 1 least value: x = 23
+```
+
+This should replace the current CRT trace that begins with the gold answer and verifies it. The constructive walk is short, deterministic, and generated from the row metadata. It also avoids any `no solution` grammar expansion. If a row is not a valid numeric CRT instance, the builder should fail hard.
+
+`rational_system_target` likely failed because the elimination trace is too dense for the 1.5B model. The trace is mathematically valid, but system solving has more arithmetic steps than the single-variable families. The next trace should be shorter and more regular.
+
+Target system trace policy:
+
+```text
+Use one fixed method.
+Keep at most four arithmetic lines before XML.
+Prefer two elimination lines plus target computation.
+Avoid explanatory fallback prose.
+Avoid row-dependent method switching.
+```
+
+Candidate trace shape:
+
+```text
+Problem 1 eliminate y: 18x = -144/5, so x = -8/5
+Problem 1 eliminate x: 18y = 144/5, so y = 8/5
+Problem 1 target: x - y = -8/5 - 8/5 = -16/5
+```
+
+Next implementation order:
+
+1. Replace the CRT trace with the constructive candidate walk.
+2. Simplify the rational-system trace to the minimum fixed elimination trace.
+3. Retrain the broad bridge from the Phase 5 all-traces adapter.
+4. Re-run deterministic broad eval.
+5. Re-run sampled broad audit.
+
+Success condition before broad GRPO:
+
+```text
+parse_complete_rate >= 0.95
+at least one new family has non-zero sampled accuracy
+at least one new family contributes prompt-level contrast
+```
+
+Do not run a lambda sweep or broad independent-versus-iso GRPO matrix until this condition is met.
+
 ## First Smoke Pass Condition
 
 The first TRL smoke passes if:
