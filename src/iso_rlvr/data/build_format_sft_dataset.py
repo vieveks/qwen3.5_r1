@@ -22,6 +22,43 @@ def build_minimal_think_completion(gold_answers: list[str]) -> str:
     return f"<think>\nLet me solve this.\n</think>\n{build_xml_completion(gold_answers)}"
 
 
+def build_think_prompt(prompt: str) -> str:
+    marker = "Solve each problem silently."
+    prefix = prompt.split(marker, maxsplit=1)[0].rstrip()
+    if not prefix:
+        prefix = prompt.rstrip()
+    return (
+        f"{prefix}\n\n"
+        "Solve each problem. Return a <think> block followed by an <answers> block. "
+        "Use <think> for scratch work. The verifier scores only the final answers "
+        "inside <answers>. Use exactly this format:\n\n"
+        "<think>\n"
+        "reasoning\n"
+        "</think>\n"
+        "<answers>\n"
+        "<answer_1>number</answer_1>\n"
+        "<answer_2>number</answer_2>\n"
+        "</answers>"
+    )
+
+
+def build_trace_think_completion(trace: str, gold_answers: list[str]) -> str:
+    return f"<think>\n{trace}\n</think>\n{build_xml_completion(gold_answers)}"
+
+
+def build_problem_restatement_think_completion(
+    row: dict[str, Any],
+    gold_answers: list[str],
+) -> str:
+    problem_lines = []
+    for idx, problem in enumerate(row.get("problems", []), start=1):
+        problem_lines.append(f"Problem {idx}: {problem}")
+    if not problem_lines:
+        problem_lines.append("Review the problems above.")
+    think = "\n".join(["Let me solve this.", *problem_lines])
+    return f"<think>\n{think}\n</think>\n{build_xml_completion(gold_answers)}"
+
+
 def _format_fraction(value: Fraction) -> str:
     if value.denominator == 1:
         return str(value.numerator)
@@ -227,10 +264,21 @@ def build_sft_row(
     chinese_remainder_traces: bool = False,
     force_answer_only: bool = False,
     minimal_think: bool = False,
+    hybrid_think: bool = False,
+    think_prompt: bool = False,
 ) -> dict[str, Any]:
     gold_answers = [str(answer) for answer in row["gold_answers"]]
     xml_completion = build_xml_completion(gold_answers)
-    if minimal_think:
+    if hybrid_think and row["family_type"] == "missing_average":
+        completion = build_trace_think_completion(build_missing_average_trace(row), gold_answers)
+        target_style = "missing_average_trace_think_xml"
+    elif hybrid_think and row["family_type"] == "rational_linear_equation":
+        completion = build_trace_think_completion(build_rational_linear_trace(row), gold_answers)
+        target_style = "rational_linear_trace_think_xml"
+    elif hybrid_think:
+        completion = build_problem_restatement_think_completion(row, gold_answers)
+        target_style = "problem_restatement_think_xml"
+    elif minimal_think:
         completion = build_minimal_think_completion(gold_answers)
         target_style = "minimal_think_xml"
     elif (
@@ -274,9 +322,9 @@ def build_sft_row(
         "metadata": row.get("metadata", []),
         "prompt_format": str(row.get("prompt_format", "")),
         "target_style": target_style,
-        "prompt": str(row["prompt"]),
+        "prompt": build_think_prompt(str(row["prompt"])) if think_prompt else str(row["prompt"]),
         "completion": completion,
-        "text": f"{row['prompt']}\n{completion}",
+        "text": f"{build_think_prompt(str(row['prompt'])) if think_prompt else row['prompt']}\n{completion}",
     }
 
 
@@ -288,6 +336,8 @@ def build_sft_rows(
     chinese_remainder_traces: bool = False,
     include_answer_only_copy: bool = False,
     minimal_think: bool = False,
+    hybrid_think: bool = False,
+    think_prompt: bool = False,
 ) -> list[dict[str, Any]]:
     if (
         include_answer_only_copy
@@ -303,6 +353,8 @@ def build_sft_rows(
                 rational_system_traces=rational_system_traces,
                 chinese_remainder_traces=chinese_remainder_traces,
                 minimal_think=minimal_think,
+                hybrid_think=hybrid_think,
+                think_prompt=think_prompt,
             ),
         ]
     return [
@@ -313,8 +365,20 @@ def build_sft_rows(
             rational_system_traces=rational_system_traces,
             chinese_remainder_traces=chinese_remainder_traces,
             minimal_think=minimal_think,
+            hybrid_think=hybrid_think,
+            think_prompt=think_prompt,
         )
     ]
+
+
+def maybe_with_think_prompt(row: dict[str, Any], think_prompt: bool) -> dict[str, Any]:
+    if not think_prompt:
+        return row
+    return {
+        **row,
+        "prompt": build_think_prompt(str(row["prompt"])),
+        "prompt_format": f"{row.get('prompt_format', '')}_think".strip("_"),
+    }
 
 
 def split_by_family_id(
@@ -352,6 +416,8 @@ def build_format_sft_dataset(
     chinese_remainder_traces: bool = False,
     include_answer_only_copy: bool = False,
     minimal_think: bool = False,
+    hybrid_think: bool = False,
+    think_prompt: bool = False,
 ) -> None:
     rows = read_jsonl(input_path)
     if max_examples is not None:
@@ -362,6 +428,12 @@ def build_format_sft_dataset(
         heldout_fraction=heldout_fraction,
         seed=seed,
     )
+    packed_train_out_rows = [
+        maybe_with_think_prompt(row, think_prompt=think_prompt) for row in packed_train_rows
+    ]
+    packed_heldout_out_rows = [
+        maybe_with_think_prompt(row, think_prompt=think_prompt) for row in packed_heldout_rows
+    ]
     train_rows = [
         sft_row
         for row in packed_train_rows
@@ -373,6 +445,8 @@ def build_format_sft_dataset(
             chinese_remainder_traces=chinese_remainder_traces,
             include_answer_only_copy=include_answer_only_copy,
             minimal_think=minimal_think,
+            hybrid_think=hybrid_think,
+            think_prompt=think_prompt,
         )
     ]
     heldout_rows = [
@@ -386,6 +460,8 @@ def build_format_sft_dataset(
             chinese_remainder_traces=chinese_remainder_traces,
             include_answer_only_copy=include_answer_only_copy,
             minimal_think=minimal_think,
+            hybrid_think=hybrid_think,
+            think_prompt=think_prompt,
         )
     ]
 
@@ -393,9 +469,9 @@ def build_format_sft_dataset(
     if heldout_out is not None:
         write_jsonl(heldout_out, heldout_rows)
     if packed_train_out is not None:
-        write_jsonl(packed_train_out, packed_train_rows)
+        write_jsonl(packed_train_out, packed_train_out_rows)
     if packed_heldout_out is not None:
-        write_jsonl(packed_heldout_out, packed_heldout_rows)
+        write_jsonl(packed_heldout_out, packed_heldout_out_rows)
 
 
 def main() -> None:
@@ -414,6 +490,8 @@ def main() -> None:
     parser.add_argument("--chinese-remainder-traces", action="store_true")
     parser.add_argument("--include-answer-only-copy", action="store_true")
     parser.add_argument("--minimal-think", action="store_true")
+    parser.add_argument("--hybrid-think", action="store_true")
+    parser.add_argument("--think-prompt", action="store_true")
     args = parser.parse_args()
 
     build_format_sft_dataset(
@@ -431,6 +509,8 @@ def main() -> None:
         chinese_remainder_traces=args.chinese_remainder_traces,
         include_answer_only_copy=args.include_answer_only_copy,
         minimal_think=args.minimal_think,
+        hybrid_think=args.hybrid_think,
+        think_prompt=args.think_prompt,
     )
 
 

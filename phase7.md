@@ -536,11 +536,151 @@ contrast_prompt_count: 0
 reward_std: 0.0366
 ```
 
-Do not run Experiment 7.4 from this adapter. GRPO would have no correctness contrast to optimize and would mostly reinforce shallow formatting behavior.
+Do not run think-GRPO from this adapter. GRPO would have no correctness contrast to optimize and would mostly reinforce shallow formatting behavior.
 
-### Experiment 7.4: Tiny Think-GRPO Smoke
+### Experiment 7.4: Hybrid-Think SFT Bridge
 
-Run only after Experiment 7.3 passes.
+Goal:
+
+```text
+Preserve the working-family reasoning behavior while adding the two-tag Phase 7 contract.
+```
+
+Rationale:
+
+The minimal-think bridge repeated the Phase 5 answer-only failure mode. It taught the output contract, but the generic anchor:
+
+```text
+Let me solve this.
+```
+
+was semantically empty. The model learned to emit `<think> + <answers>` without preserving the arithmetic paths that made the Phase 5 all-traces adapter useful.
+
+The hybrid bridge therefore uses different think-block content by family role:
+
+| Family type | Think-block policy |
+| --- | --- |
+| `missing_average` | Existing deterministic Phase 5 trace inside `<think>` |
+| `rational_linear_equation` | Existing deterministic Phase 5 trace inside `<think>` |
+| `chinese_remainder` | Generic anchor plus problem restatement |
+| `rational_system_target` | Generic anchor plus problem restatement |
+
+Important:
+
+```text
+The hard-family think blocks do not contain generated CRT or system-solving algorithms.
+They only contain enough context to keep the reasoning channel non-empty.
+```
+
+Implementation:
+
+```text
+Builder flags: --hybrid-think --think-prompt
+Train dataset: outputs/phase7/format_sft_pair_xml_hybrid_think_train.jsonl
+Heldout dataset: outputs/phase7/format_sft_pair_xml_hybrid_think_heldout.jsonl
+Packed train: outputs/phase7/packed_calibrated_train_xml_pair_hybrid_think_train.jsonl
+Packed heldout: outputs/phase7/packed_calibrated_train_xml_pair_hybrid_think_heldout.jsonl
+Family types: missing_average, rational_linear_equation, rational_system_target, chinese_remainder
+```
+
+Training config:
+
+```text
+Config: configs/format_sft_qwen25_math_1_5b_hybrid_think_all_families_from_phase5_1epoch.yaml
+Base model: Qwen/Qwen2.5-Math-1.5B
+Initial adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+Epochs: 1
+Batch size: 2
+Learning rate: 1e-4
+Max sequence length: 1536
+Output: outputs/phase7/format_sft_qwen25_math_1_5b_hybrid_think_all_families_from_phase5_1epoch/adapter_or_model
+```
+
+Deterministic broad eval:
+
+```text
+Config: configs/packed_eval_phase7_hybrid_think_bridge_512.yaml
+Dataset: outputs/phase7/packed_calibrated_heldout_clean_think_pair_64_seed0.jsonl
+Max new tokens: 512
+examples: 64
+variant_examples: 128
+accuracy: 0.5312
+family_accuracy: 0.4219
+parse_complete_rate: 0.9688
+answer_count_mismatch_rate: 0.0312
+suspicious_rate: 0.3125
+think_block_rate: 0.9688
+nontrivial_think_block_rate: 0.9688
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Think block | Non-trivial think |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 1.0000 | 1.0000 |
+| `missing_average` | 0.8158 | 0.7368 | 1.0000 | 0.0000 | 1.0000 | 1.0000 |
+| `rational_linear_equation` | 0.6607 | 0.4643 | 0.9286 | 0.0714 | 0.9286 | 0.9286 |
+| `rational_system_target` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 1.0000 | 1.0000 |
+
+Sampled hard-family audit:
+
+```text
+Config: configs/packed_rollout_audit_phase7_hybrid_think_hard_sampled.yaml
+Dataset: outputs/phase7/packed_hard_heldout_clean_think_pair_17_seed0.jsonl
+Samples per prompt: 4
+Samples: 68
+Max new tokens: 512
+Temperature: 0.7
+accuracy: 0.0147
+family_accuracy: 0.0147
+parse_complete_rate: 0.9265
+answer_count_mismatch_rate: 0.0735
+suspicious_rate: 0.9559
+reward_mean: 0.0408
+reward_std: 0.1299
+contrast_prompt_count: 1
+contrast_prompt_ids: ["fam_000009"]
+think_block_rate: 0.9559
+nontrivial_think_block_rate: 0.9118
+passes_audit_gate: true
+```
+
+By hard family type:
+
+| Family type | Accuracy | Parse complete | Mismatch | Think block | Non-trivial think |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 0.0227 | 0.9318 | 0.0682 | 0.9545 | 0.9545 |
+| `rational_system_target` | 0.0000 | 0.9167 | 0.0833 | 0.9583 | 0.8333 |
+
+Observed failure modes:
+
+- The rational-system family still emits algebraic expressions or prose inside `<answer_*>` tags.
+- Some sampled completions are empty or fail to reach the final answer block.
+- CRT can still fall back into repeated guessing until the token cap.
+- Some malformed answers contain non-numeric markup such as `<sup>` inside answer tags.
+
+Conclusion:
+
+The hybrid bridge is a clear improvement over minimal-think SFT:
+
+```text
+minimal-think deterministic accuracy: 0.1094
+hybrid-think deterministic accuracy: 0.5312
+```
+
+It preserves much more of the Phase 5 reasoning behavior while adding the two-tag contract. It also creates the first nonzero sampled hard-family signal:
+
+```text
+hard-family sampled accuracy: 0.0147
+contrast_prompt_count: 1
+reward_std: 0.1299
+```
+
+However, this is still a weak GRPO starting point. The audit passes technically, but the signal is concentrated in one CRT prompt, rational-system accuracy remains `0.0000`, mismatch is above the preferred gate, and suspicious rate remains very high. Treat this as a partial recovery, not as a ready mainline training setup.
+
+### Experiment 7.5: Tiny Think-GRPO Smoke
+
+Run only after a sampled audit produces enough hard-family correctness contrast to justify optimization.
 
 Goal:
 
@@ -587,20 +727,20 @@ Finish and preserve the Phase 6 narrow result as the main result.
 
 The first minimal-think bridge was useful but failed as a GRPO starting point. It proved that the parser/reward contract works with `<think> + <answers>`, but it also showed that one epoch of answer-only minimal-think SFT overwrites too much of the Phase 5 reasoning bridge.
 
-Do not proceed to think-GRPO from the current minimal-think adapter.
+The hybrid-think bridge is the current best Phase 7 adapter. It recovers most of the broad deterministic accuracy that minimal-think destroyed and creates one sampled hard-family contrast prompt, but the hard-family signal remains too sparse for a meaningful main GRPO run.
 
-The next Phase 7 attempt should preserve reasoning capability while adding the two-tag contract. Candidate fixes:
+Do not proceed to a full think-GRPO experiment yet. Reasonable next checks are:
 
-- use a much smaller contract-only update, such as fewer steps or lower learning rate
-- mix minimal-think rows with replay of the Phase 5 all-traces rows
-- wrap existing Phase 5 traces inside `<think>` only for the two working families while keeping hard-family think blocks generic
-- test prompt-only `<think>` scaffolding from the Phase 5 adapter before another SFT run
+- run a tiny guarded GRPO smoke only to test whether the one hard-family contrast prompt is stable under updates
+- improve answer-tag hygiene for rational-system outputs
+- test a shorter or lower-temperature hard-family rollout to reduce malformed answers
+- increase hard-family SFT data before another GRPO attempt
 
 The key lesson:
 
 ```text
 Minimal think SFT teaches the tag contract, but by itself it is too answer-only.
-The next bridge must preserve the reasoning behavior that Phase 5 built.
+Hybrid think SFT preserves more reasoning behavior, but hard-family correctness contrast is still sparse.
 ```
 
 The Phase 7 thesis:

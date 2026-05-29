@@ -2,8 +2,11 @@ from iso_rlvr.data.build_format_sft_dataset import (
     build_chinese_remainder_trace,
     build_missing_average_trace,
     build_minimal_think_completion,
+    build_problem_restatement_think_completion,
     build_rational_linear_trace,
     build_rational_system_trace,
+    build_think_prompt,
+    build_trace_think_completion,
     build_format_sft_dataset,
     build_sft_row,
     build_sft_rows,
@@ -21,6 +24,7 @@ def _packed_row(family_id: str, answer: str = "3") -> dict:
         "num_variants": 2,
         "gold_answers": [answer, "7"],
         "prompt_format": "xml",
+        "problems": ["Solve x.", "Solve y."],
         "prompt": "Problem 1: ...\n\nProblem 2: ...",
     }
 
@@ -37,6 +41,10 @@ def _missing_average_row(family_id: str = "fam_000001") -> dict:
             {"known": "30,62,10,21,75,60,64", "final_average": "177/4", "missing": 32},
         ],
         "prompt_format": "xml",
+        "problems": [
+            "The average of 56, 29, 13, 15, and x is 29. Find x.",
+            "The average of 30, 62, 10, 21, 75, 60, 64, and x is 177/4. Find x.",
+        ],
         "prompt": "Problem 1: ...\n\nProblem 2: ...",
     }
 
@@ -53,6 +61,7 @@ def _rational_linear_row(family_id: str = "fam_000020") -> dict:
             {"a": 4, "b": "1/3", "c": "101/15", "solution": "8/5"},
         ],
         "prompt_format": "xml",
+        "problems": ["-5x - 13/4 = -45/4", "4x + 1/3 = 101/15"],
         "prompt": "Problem 1: ...\n\nProblem 2: ...",
     }
 
@@ -87,6 +96,7 @@ def _rational_system_row(family_id: str = "fam_000030") -> dict:
             },
         ],
         "prompt_format": "xml",
+        "problems": ["2x + 3y = -2 and x - y = 3/2. Find x + y.", "..."],
         "prompt": "Problem 1: ...\n\nProblem 2: ...",
     }
 
@@ -103,6 +113,10 @@ def _chinese_remainder_row(family_id: str = "fam_000040") -> dict:
             {"answer": 58, "mod_a": 11, "mod_b": 13},
         ],
         "prompt_format": "xml",
+        "problems": [
+            "Find x with remainder 2 mod 7 and 4 mod 9.",
+            "Find x with remainder 3 mod 11 and 6 mod 13.",
+        ],
         "prompt": "Problem 1: ...\n\nProblem 2: ...",
     }
 
@@ -128,6 +142,53 @@ def test_build_minimal_think_completion_uses_generic_anchor():
         "<answers>\n"
         "<answer_1>16/5</answer_1>\n"
         "<answer_2>-3</answer_2>\n"
+        "</answers>"
+    )
+
+
+def test_build_think_prompt_replaces_answer_only_instruction():
+    prompt = build_think_prompt(
+        "Problem 1: A\n\nProblem 2: B\n\n"
+        "Solve each problem silently. Return only the final answers."
+    )
+
+    assert "Problem 1: A" in prompt
+    assert "Return a <think> block followed by an <answers> block" in prompt
+    assert "Solve each problem silently" not in prompt
+
+
+def test_build_trace_think_completion_wraps_existing_trace():
+    completion = build_trace_think_completion("Problem 1 trace", ["3", "3"])
+
+    assert completion == (
+        "<think>\n"
+        "Problem 1 trace\n"
+        "</think>\n"
+        "<answers>\n"
+        "<answer_1>3</answer_1>\n"
+        "<answer_2>3</answer_2>\n"
+        "</answers>"
+    )
+
+
+def test_build_problem_restatement_think_completion_uses_problem_text_without_trace():
+    completion = build_problem_restatement_think_completion(
+        _chinese_remainder_row(),
+        ["58", "58"],
+    )
+
+    assert completion.startswith(
+        "<think>\n"
+        "Let me solve this.\n"
+        "Problem 1: Find x with remainder 2 mod 7 and 4 mod 9.\n"
+        "Problem 2: Find x with remainder 3 mod 11 and 6 mod 13.\n"
+        "</think>"
+    )
+    assert "choose k" not in completion
+    assert completion.endswith(
+        "<answers>\n"
+        "<answer_1>58</answer_1>\n"
+        "<answer_2>58</answer_2>\n"
         "</answers>"
     )
 
@@ -164,6 +225,30 @@ def test_build_sft_row_can_use_minimal_think_for_any_family():
         "<answer_2>58</answer_2>\n"
         "</answers>"
     )
+
+
+def test_build_sft_row_can_use_hybrid_think_for_working_family_trace():
+    row = build_sft_row(_rational_linear_row(), hybrid_think=True, think_prompt=True)
+
+    assert row["target_style"] == "rational_linear_trace_think_xml"
+    assert row["prompt_format"] == "xml"
+    assert "Return a <think> block" in row["prompt"]
+    assert row["completion"].startswith("<think>\nProblem 1 isolate:")
+    assert row["completion"].endswith(
+        "<answers>\n"
+        "<answer_1>8/5</answer_1>\n"
+        "<answer_2>8/5</answer_2>\n"
+        "</answers>"
+    )
+
+
+def test_build_sft_row_can_use_hybrid_think_for_hard_family_restatement():
+    row = build_sft_row(_chinese_remainder_row(), hybrid_think=True, think_prompt=True)
+
+    assert row["target_style"] == "problem_restatement_think_xml"
+    assert "Return a <think> block" in row["prompt"]
+    assert row["completion"].startswith("<think>\nLet me solve this.\nProblem 1:")
+    assert "choose k" not in row["completion"]
 
 
 def test_build_missing_average_trace_uses_prompt_metadata_values():
@@ -453,3 +538,36 @@ def test_build_format_sft_dataset_can_make_minimal_think_rows(tmp_path):
     sft_rows = read_jsonl(train_out)
     assert [row["target_style"] for row in sft_rows] == ["minimal_think_xml"] * 4
     assert all(row["completion"].startswith("<think>\nLet me solve this.\n</think>") for row in sft_rows)
+
+
+def test_build_format_sft_dataset_can_make_hybrid_think_rows_and_packed_prompts(tmp_path):
+    input_path = tmp_path / "packed.jsonl"
+    train_out = tmp_path / "sft_train.jsonl"
+    packed_train_out = tmp_path / "packed_train.jsonl"
+    rows = [
+        _missing_average_row("fam_000001"),
+        _rational_linear_row("fam_000020"),
+        _rational_system_row("fam_000030"),
+        _chinese_remainder_row("fam_000040"),
+    ]
+    write_jsonl(input_path, rows)
+
+    build_format_sft_dataset(
+        input_path,
+        train_out,
+        packed_train_out=packed_train_out,
+        heldout_fraction=0.0,
+        hybrid_think=True,
+        think_prompt=True,
+    )
+
+    sft_rows = read_jsonl(train_out)
+    packed_rows = read_jsonl(packed_train_out)
+    assert [row["target_style"] for row in sft_rows] == [
+        "missing_average_trace_think_xml",
+        "rational_linear_trace_think_xml",
+        "problem_restatement_think_xml",
+        "problem_restatement_think_xml",
+    ]
+    assert all("Return a <think> block" in row["prompt"] for row in sft_rows)
+    assert all("Return a <think> block" in row["prompt"] for row in packed_rows)
