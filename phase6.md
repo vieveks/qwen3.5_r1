@@ -1537,6 +1537,19 @@ The best narrow result is `lambda_iso=1.00`, which improves family accuracy by `
 
 The improvement at `lambda_iso=0.25` and `0.50` comes entirely from `missing_average`. At `lambda_iso=1.00`, `missing_average` remains perfect and `rational_linear_equation` improves from `0.6000` to `0.6500` variant accuracy and from `0.4000` to `0.5000` family accuracy.
 
+Analysis note:
+
+The monotonic lambda trend is stronger evidence than any single iso-vs-independent delta by itself. Under matched initialization, seed, dataset order, trainer settings, and eval code, increasing the family reward scale produced a monotonic heldout family-accuracy sequence:
+
+```text
+independent: 0.5625
+lambda_iso=0.25: 0.6250
+lambda_iso=0.50: 0.6250
+lambda_iso=1.00: 0.6875
+```
+
+This is not a statistical proof on its own because the heldout set is small. But it is the expected shape if the isomorphic family bonus is doing incremental work rather than injecting arbitrary reward noise. The result should be reported as a controlled, narrow trend, not as a broad-family generalization claim.
+
 Conclusion:
 
 The narrow Phase 6 claim is complete:

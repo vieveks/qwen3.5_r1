@@ -94,6 +94,7 @@ Initial target style:
 
 ```xml
 <think>
+Let me solve this.
 </think>
 <answers>
 <answer_1>{gold_answers[0]}</answer_1>
@@ -101,9 +102,23 @@ Initial target style:
 </answers>
 ```
 
+Decision:
+
+Use a minimal non-empty think anchor in SFT, not a literally empty block.
+
+```text
+Preferred anchor: Let me solve this.
+```
+
+Reason:
+
+A completely empty think block may teach the model that the reasoning channel is disposable and increase the chance that sampled completions skip `<think>` entirely. A short generic anchor teaches the two-tag contract without imposing a deterministic reasoning algorithm.
+
 Important:
 
 - Do not pre-fill `<think>` with deterministic traces in the first bridge.
+- Do not use family-specific or problem-specific reasoning in the initial SFT think block.
+- Do not treat the placeholder text as semantically important.
 - Do not generate programmatic CRT or rational-system reasoning traces for this bridge.
 - Do not reward or parse the reasoning content.
 - Keep the existing strict XML numeric grammar for final answers.
