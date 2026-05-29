@@ -7,6 +7,7 @@ import random
 from typing import Any
 
 import torch
+from peft import PeftModel
 from torch.nn.utils.rnn import pad_sequence
 from torch.optim import AdamW
 from tqdm import tqdm
@@ -90,7 +91,10 @@ def train(config_path: Path) -> None:
         rows = rows[: int(cfg["max_examples"])]
 
     model, tokenizer, _device = load_causal_lm(cfg["model_name"], cfg.get("device", "auto"))
-    model = maybe_add_lora(model, cfg)
+    if cfg.get("adapter_path"):
+        model = PeftModel.from_pretrained(model, cfg["adapter_path"], is_trainable=True)
+    else:
+        model = maybe_add_lora(model, cfg)
     model.train()
 
     separator = str(cfg.get("separator", "\n"))

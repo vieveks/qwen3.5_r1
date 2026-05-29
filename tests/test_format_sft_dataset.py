@@ -1,6 +1,8 @@
 from iso_rlvr.data.build_format_sft_dataset import (
+    build_chinese_remainder_trace,
     build_missing_average_trace,
     build_rational_linear_trace,
+    build_rational_system_trace,
     build_format_sft_dataset,
     build_sft_row,
     build_sft_rows,
@@ -48,6 +50,56 @@ def _rational_linear_row(family_id: str = "fam_000020") -> dict:
         "metadata": [
             {"a": -5, "b": "-13/4", "c": "-45/4", "solution": "8/5"},
             {"a": 4, "b": "1/3", "c": "101/15", "solution": "8/5"},
+        ],
+        "prompt_format": "xml",
+        "prompt": "Problem 1: ...\n\nProblem 2: ...",
+    }
+
+
+def _rational_system_row(family_id: str = "fam_000030") -> dict:
+    return {
+        "family_id": family_id,
+        "family_type": "rational_system_target",
+        "variant_ids": [f"{family_id}_v0", f"{family_id}_v1"],
+        "num_variants": 2,
+        "gold_answers": ["-1/2", "-1/2"],
+        "metadata": [
+            {
+                "x": "1/2",
+                "y": "-1",
+                "target_name": "x + y",
+                "target": "-1/2",
+                "a": 2,
+                "b": 3,
+                "c": 1,
+                "d": -1,
+            },
+            {
+                "x": "1/2",
+                "y": "-1",
+                "target_name": "x + y",
+                "target": "-1/2",
+                "a": -3,
+                "b": 2,
+                "c": 5,
+                "d": 1,
+            },
+        ],
+        "prompt_format": "xml",
+        "prompt": "Problem 1: ...\n\nProblem 2: ...",
+    }
+
+
+def _chinese_remainder_row(family_id: str = "fam_000040") -> dict:
+    return {
+        "family_id": family_id,
+        "family_type": "chinese_remainder",
+        "variant_ids": [f"{family_id}_v0", f"{family_id}_v1"],
+        "num_variants": 2,
+        "gold_answers": ["58", "58"],
+        "metadata": [
+            {"answer": 58, "mod_a": 7, "mod_b": 9},
+            {"answer": 58, "mod_a": 11, "mod_b": 13},
         ],
         "prompt_format": "xml",
         "prompt": "Problem 1: ...\n\nProblem 2: ...",
@@ -130,6 +182,79 @@ def test_build_sft_row_can_add_rational_linear_trace_before_xml():
         "<answers>\n"
         "<answer_1>8/5</answer_1>\n"
         "<answer_2>8/5</answer_2>\n"
+        "</answers>"
+    )
+
+
+def test_build_rational_system_trace_uses_fixed_elimination_method():
+    trace = build_rational_system_trace(_rational_system_row())
+
+    assert trace == (
+        "Problem 1 equations: 2x + (3)y = -2; 1x + (-1)y = 3/2\n"
+        "Problem 1 eliminate y: -1 times first minus 3 times second gives -5x = -5/2\n"
+        "Problem 1 solve x: x = -5/2 / -5 = 1/2\n"
+        "Problem 1 eliminate x: 2 times second minus 1 times first gives -5y = 5\n"
+        "Problem 1 solve y: y = 5 / -5 = -1\n"
+        "Problem 1 target: x + y = (1/2) + (-1) = -1/2\n\n"
+        "Problem 2 equations: -3x + (2)y = -7/2; 5x + (1)y = 3/2\n"
+        "Problem 2 eliminate y: 1 times first minus 2 times second gives -13x = -13/2\n"
+        "Problem 2 solve x: x = -13/2 / -13 = 1/2\n"
+        "Problem 2 eliminate x: -3 times second minus 5 times first gives -13y = 13\n"
+        "Problem 2 solve y: y = 13 / -13 = -1\n"
+        "Problem 2 target: x + y = (1/2) + (-1) = -1/2"
+    )
+
+
+def test_build_sft_row_can_add_rational_system_trace_before_xml():
+    row = build_sft_row(_rational_system_row(), rational_system_traces=True)
+
+    assert row["target_style"] == "rational_system_trace_xml"
+    assert row["completion"].startswith("Problem 1 equations: 2x + (3)y = -2")
+    assert row["completion"].endswith(
+        "<answers>\n"
+        "<answer_1>-1/2</answer_1>\n"
+        "<answer_2>-1/2</answer_2>\n"
+        "</answers>"
+    )
+
+
+def test_build_chinese_remainder_trace_uses_numeric_solution_and_assertions():
+    trace = build_chinese_remainder_trace(_chinese_remainder_row())
+
+    assert trace == (
+        "Problem 1 range: 0 <= x < 7 x 9 = 63\n"
+        "Problem 1 check first congruence: 58 mod 7 = 2\n"
+        "Problem 1 check second congruence: 58 mod 9 = 4\n"
+        "Problem 1 least value: x = 58\n\n"
+        "Problem 2 range: 0 <= x < 11 x 13 = 143\n"
+        "Problem 2 check first congruence: 58 mod 11 = 3\n"
+        "Problem 2 check second congruence: 58 mod 13 = 6\n"
+        "Problem 2 least value: x = 58"
+    )
+
+
+def test_build_chinese_remainder_trace_rejects_non_coprime_moduli():
+    row = _chinese_remainder_row()
+    row["metadata"][0]["mod_a"] = 6
+    row["metadata"][0]["mod_b"] = 9
+
+    try:
+        build_chinese_remainder_trace(row)
+    except ValueError as exc:
+        assert "coprime" in str(exc)
+    else:
+        raise AssertionError("Expected non-coprime CRT metadata to raise ValueError")
+
+
+def test_build_sft_row_can_add_chinese_remainder_trace_before_xml():
+    row = build_sft_row(_chinese_remainder_row(), chinese_remainder_traces=True)
+
+    assert row["target_style"] == "chinese_remainder_trace_xml"
+    assert row["completion"].startswith("Problem 1 range: 0 <= x < 7 x 9 = 63")
+    assert row["completion"].endswith(
+        "<answers>\n"
+        "<answer_1>58</answer_1>\n"
+        "<answer_2>58</answer_2>\n"
         "</answers>"
     )
 
@@ -250,4 +375,34 @@ def test_build_format_sft_dataset_can_trace_both_target_families(tmp_path):
     assert [row["target_style"] for row in sft_rows] == [
         "missing_average_trace_xml",
         "rational_linear_trace_xml",
+    ]
+
+
+def test_build_format_sft_dataset_can_trace_all_broad_families(tmp_path):
+    input_path = tmp_path / "packed.jsonl"
+    train_out = tmp_path / "sft_train.jsonl"
+    rows = [
+        _missing_average_row("fam_000001"),
+        _rational_linear_row("fam_000020"),
+        _rational_system_row("fam_000030"),
+        _chinese_remainder_row("fam_000040"),
+    ]
+    write_jsonl(input_path, rows)
+
+    build_format_sft_dataset(
+        input_path,
+        train_out,
+        heldout_fraction=0.0,
+        missing_average_traces=True,
+        rational_linear_traces=True,
+        rational_system_traces=True,
+        chinese_remainder_traces=True,
+    )
+
+    sft_rows = read_jsonl(train_out)
+    assert [row["target_style"] for row in sft_rows] == [
+        "missing_average_trace_xml",
+        "rational_linear_trace_xml",
+        "rational_system_trace_xml",
+        "chinese_remainder_trace_xml",
     ]

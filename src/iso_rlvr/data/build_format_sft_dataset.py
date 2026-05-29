@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from fractions import Fraction
+import math
 from pathlib import Path
 import random
 from typing import Any
@@ -102,10 +103,120 @@ def build_rational_linear_trace(row: dict[str, Any]) -> str:
     return "\n\n".join(traces)
 
 
+def build_rational_system_trace(row: dict[str, Any]) -> str:
+    traces = []
+    metadata_rows = row.get("metadata", [])
+    gold_answers = [str(answer) for answer in row["gold_answers"]]
+    if len(metadata_rows) != len(gold_answers):
+        raise ValueError("rational_system_target metadata must match gold_answers length.")
+
+    for idx, (metadata, gold_answer) in enumerate(
+        zip(metadata_rows, gold_answers),
+        start=1,
+    ):
+        a = int(metadata["a"])
+        b = int(metadata["b"])
+        c = int(metadata["c"])
+        d = int(metadata["d"])
+        x = Fraction(str(metadata["x"]))
+        y = Fraction(str(metadata["y"]))
+        target_name = str(metadata["target_name"])
+        e = a * x + b * y
+        f = c * x + d * y
+        det = a * d - b * c
+        if det == 0:
+            raise ValueError("rational_system_target trace requires nonzero determinant.")
+
+        x_rhs = d * e - b * f
+        y_rhs = a * f - c * e
+        solved_x = x_rhs / det
+        solved_y = y_rhs / det
+        if solved_x != x or solved_y != y:
+            raise ValueError("rational_system_target metadata is inconsistent.")
+
+        if target_name == "x + y":
+            target = x + y
+            target_expression = f"({_format_fraction(x)}) + ({_format_fraction(y)})"
+        elif target_name == "x - y":
+            target = x - y
+            target_expression = f"({_format_fraction(x)}) - ({_format_fraction(y)})"
+        elif target_name == "2x + y":
+            target = 2 * x + y
+            target_expression = f"2({_format_fraction(x)}) + ({_format_fraction(y)})"
+        elif target_name == "3y - x":
+            target = 3 * y - x
+            target_expression = f"3({_format_fraction(y)}) - ({_format_fraction(x)})"
+        else:
+            raise ValueError(f"Unsupported rational_system_target target: {target_name}")
+        if _format_fraction(target) != gold_answer:
+            raise ValueError(
+                "rational_system_target trace does not match gold answer: "
+                f"{_format_fraction(target)} != {gold_answer}"
+            )
+
+        traces.append(
+            "\n".join(
+                [
+                    f"Problem {idx} equations: {a}x + ({b})y = {_format_fraction(e)}; {c}x + ({d})y = {_format_fraction(f)}",
+                    f"Problem {idx} eliminate y: {d} times first minus {b} times second gives {det}x = {_format_fraction(x_rhs)}",
+                    f"Problem {idx} solve x: x = {_format_fraction(x_rhs)} / {det} = {_format_fraction(x)}",
+                    f"Problem {idx} eliminate x: {a} times second minus {c} times first gives {det}y = {_format_fraction(y_rhs)}",
+                    f"Problem {idx} solve y: y = {_format_fraction(y_rhs)} / {det} = {_format_fraction(y)}",
+                    f"Problem {idx} target: {target_name} = {target_expression} = {gold_answer}",
+                ]
+            )
+        )
+
+    return "\n\n".join(traces)
+
+
+def build_chinese_remainder_trace(row: dict[str, Any]) -> str:
+    traces = []
+    metadata_rows = row.get("metadata", [])
+    gold_answers = [str(answer) for answer in row["gold_answers"]]
+    if len(metadata_rows) != len(gold_answers):
+        raise ValueError("chinese_remainder metadata must match gold_answers length.")
+
+    for idx, (metadata, gold_answer) in enumerate(
+        zip(metadata_rows, gold_answers),
+        start=1,
+    ):
+        answer = int(metadata["answer"])
+        mod_a = int(metadata["mod_a"])
+        mod_b = int(metadata["mod_b"])
+        if math.gcd(mod_a, mod_b) != 1:
+            raise ValueError("chinese_remainder trace requires coprime moduli.")
+        product = mod_a * mod_b
+        if not 0 <= answer < product:
+            raise ValueError("chinese_remainder answer must be least nonnegative modulo product.")
+        rem_a = answer % mod_a
+        rem_b = answer % mod_b
+        if str(answer) != gold_answer:
+            raise ValueError(
+                "chinese_remainder trace does not match gold answer: "
+                f"{answer} != {gold_answer}"
+            )
+
+        traces.append(
+            "\n".join(
+                [
+                    f"Problem {idx} range: 0 <= x < {mod_a} x {mod_b} = {product}",
+                    f"Problem {idx} check first congruence: {answer} mod {mod_a} = {rem_a}",
+                    f"Problem {idx} check second congruence: {answer} mod {mod_b} = {rem_b}",
+                    f"Problem {idx} least value: x = {gold_answer}",
+                ]
+            )
+        )
+
+    return "\n\n".join(traces)
+
+
 def build_sft_row(
     row: dict[str, Any],
     missing_average_traces: bool = False,
     rational_linear_traces: bool = False,
+    rational_system_traces: bool = False,
+    chinese_remainder_traces: bool = False,
     force_answer_only: bool = False,
 ) -> dict[str, Any]:
     gold_answers = [str(answer) for answer in row["gold_answers"]]
@@ -124,6 +235,20 @@ def build_sft_row(
     ):
         completion = f"{build_rational_linear_trace(row)}\n\n{xml_completion}"
         target_style = "rational_linear_trace_xml"
+    elif (
+        rational_system_traces
+        and row["family_type"] == "rational_system_target"
+        and not force_answer_only
+    ):
+        completion = f"{build_rational_system_trace(row)}\n\n{xml_completion}"
+        target_style = "rational_system_trace_xml"
+    elif (
+        chinese_remainder_traces
+        and row["family_type"] == "chinese_remainder"
+        and not force_answer_only
+    ):
+        completion = f"{build_chinese_remainder_trace(row)}\n\n{xml_completion}"
+        target_style = "chinese_remainder_trace_xml"
     else:
         completion = xml_completion
         target_style = "answer_only_xml"
@@ -147,6 +272,8 @@ def build_sft_rows(
     row: dict[str, Any],
     missing_average_traces: bool = False,
     rational_linear_traces: bool = False,
+    rational_system_traces: bool = False,
+    chinese_remainder_traces: bool = False,
     include_answer_only_copy: bool = False,
 ) -> list[dict[str, Any]]:
     if (
@@ -160,6 +287,8 @@ def build_sft_rows(
                 row,
                 missing_average_traces=True,
                 rational_linear_traces=rational_linear_traces,
+                rational_system_traces=rational_system_traces,
+                chinese_remainder_traces=chinese_remainder_traces,
             ),
         ]
     return [
@@ -167,6 +296,8 @@ def build_sft_rows(
             row,
             missing_average_traces=missing_average_traces,
             rational_linear_traces=rational_linear_traces,
+            rational_system_traces=rational_system_traces,
+            chinese_remainder_traces=chinese_remainder_traces,
         )
     ]
 
@@ -202,6 +333,8 @@ def build_format_sft_dataset(
     max_examples: int | None = None,
     missing_average_traces: bool = False,
     rational_linear_traces: bool = False,
+    rational_system_traces: bool = False,
+    chinese_remainder_traces: bool = False,
     include_answer_only_copy: bool = False,
 ) -> None:
     rows = read_jsonl(input_path)
@@ -220,6 +353,8 @@ def build_format_sft_dataset(
             row,
             missing_average_traces=missing_average_traces,
             rational_linear_traces=rational_linear_traces,
+            rational_system_traces=rational_system_traces,
+            chinese_remainder_traces=chinese_remainder_traces,
             include_answer_only_copy=include_answer_only_copy,
         )
     ]
@@ -230,6 +365,8 @@ def build_format_sft_dataset(
             row,
             missing_average_traces=missing_average_traces,
             rational_linear_traces=rational_linear_traces,
+            rational_system_traces=rational_system_traces,
+            chinese_remainder_traces=chinese_remainder_traces,
             include_answer_only_copy=include_answer_only_copy,
         )
     ]
@@ -255,6 +392,8 @@ def main() -> None:
     parser.add_argument("--max-examples", type=int, default=None)
     parser.add_argument("--missing-average-traces", action="store_true")
     parser.add_argument("--rational-linear-traces", action="store_true")
+    parser.add_argument("--rational-system-traces", action="store_true")
+    parser.add_argument("--chinese-remainder-traces", action="store_true")
     parser.add_argument("--include-answer-only-copy", action="store_true")
     args = parser.parse_args()
 
@@ -269,6 +408,8 @@ def main() -> None:
         max_examples=args.max_examples,
         missing_average_traces=args.missing_average_traces,
         rational_linear_traces=args.rational_linear_traces,
+        rational_system_traces=args.rational_system_traces,
+        chinese_remainder_traces=args.chinese_remainder_traces,
         include_answer_only_copy=args.include_answer_only_copy,
     )
 

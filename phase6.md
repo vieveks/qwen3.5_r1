@@ -887,6 +887,208 @@ Conclusion:
 
 Do not sweep `lambda_iso` yet. The next step should be broad-interface stabilization: add deterministic trace coverage or another bridge for the heldout calibrated family types, then rerun this broad eval. The clean two-family result is real, but it is not yet a generalization result across unseen family types.
 
+### Experiment 6.7: Broad All-Traces SFT Bridge
+
+Goal:
+
+```text
+Repair the broad packed XML interface for all calibrated family types before any more GRPO.
+```
+
+Implementation:
+
+```text
+Trace builder: src/iso_rlvr/data/build_format_sft_dataset.py
+Trainer update: src/iso_rlvr/train/format_sft.py
+Tests: tests/test_format_sft_dataset.py
+```
+
+New trace coverage:
+
+| Family type | Trace policy |
+| --- | --- |
+| `missing_average` | existing deterministic sum trace |
+| `rational_linear_equation` | existing deterministic isolate/divide trace |
+| `rational_system_target` | fixed elimination method for every row |
+| `chinese_remainder` | numeric CRT trace with hard assertions for coprime moduli and least nonnegative answer |
+
+Important design choices:
+
+- `rational_system_target` always uses the same elimination procedure. It does not switch between substitution and elimination based on row shape.
+- `chinese_remainder` rows assert coprime moduli and numeric least nonnegative answers. No `no solution` target is allowed.
+- The SFT trainer now supports `adapter_path`, so this bridge continues from the Phase 5 all-traces adapter rather than starting a fresh LoRA.
+
+Targeted test result:
+
+```text
+tests/test_format_sft_dataset.py: 19 passed
+tests/test_format_sft.py: 3 passed
+```
+
+Generated broad SFT dataset:
+
+```text
+Packed source: outputs/phase6/packed_calibrated_train_xml_pair_all_families.jsonl
+SFT train: outputs/phase6/format_sft_pair_xml_broad_all_traces_train.jsonl
+SFT heldout: outputs/phase6/format_sft_pair_xml_broad_all_traces_heldout.jsonl
+Packed train split: outputs/phase6/packed_calibrated_train_xml_pair_broad_all_traces_train.jsonl
+Packed heldout split: outputs/phase6/packed_calibrated_train_xml_pair_broad_all_traces_heldout.jsonl
+Train rows: 180
+Heldout rows: 20
+```
+
+Train target styles:
+
+| Target style | Rows |
+| --- | ---: |
+| `chinese_remainder_trace_xml` | 14 |
+| `missing_average_trace_xml` | 54 |
+| `rational_linear_trace_xml` | 92 |
+| `rational_system_trace_xml` | 20 |
+
+Training config:
+
+```text
+Config: configs/format_sft_qwen25_math_1_5b_xml_broad_all_traces_from_phase5_1epoch.yaml
+Base model: Qwen/Qwen2.5-Math-1.5B
+Initial adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+Rows: 180
+Steps: 90
+Batch size: 2
+Learning rate: 1e-4
+Max sequence length: 1536
+Output: outputs/phase6/format_sft_qwen25_math_1_5b_xml_broad_all_traces_from_phase5_1epoch/adapter_or_model
+```
+
+Final logged training losses:
+
+| Step | Loss |
+| ---: | ---: |
+| 82 | 0.0826 |
+| 83 | 0.0028 |
+| 84 | 0.0215 |
+| 85 | 0.0157 |
+| 86 | 0.0515 |
+| 87 | 0.0014 |
+| 88 | 0.0063 |
+| 89 | 0.0137 |
+
+Broad deterministic heldout eval:
+
+```text
+Config: configs/packed_eval_phase6_broad_bridge_512.yaml
+Dataset: outputs/phase6/packed_calibrated_heldout_clean_xml_pair_64_seed0.jsonl
+Max new tokens: 512
+accuracy: 0.5938
+family_accuracy: 0.4844
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0938
+avg_reward: 0.8851
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Suspicious |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 0.4545 |
+| `missing_average` | 0.8947 | 0.7895 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_linear_equation` | 0.7321 | 0.5714 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_system_target` | 0.0833 | 0.0000 | 1.0000 | 0.0000 | 0.1667 |
+
+Interpretation:
+
+The broad bridge fixed the deterministic parser interface:
+
+```text
+parse_complete_rate improved from 0.9063 / 0.8906 to 1.0000
+answer_count_mismatch_rate improved to 0.0000
+suspicious_rate is back under the 0.1000 gate
+```
+
+It did not solve broad capability. `chinese_remainder` is now parse-complete but still has `0.0000` accuracy, and `rational_system_target` is mostly wrong despite complete XML. This is acceptable for the immediate interface gate but not enough to claim broad Iso-RLVR generalization.
+
+### Experiment 6.8: Broad Bridge Sampled Rollout Audit
+
+Goal:
+
+```text
+Check whether the broad bridge keeps the XML interface stable under sampled rollouts before any broad GRPO run.
+```
+
+Config:
+
+```text
+Config: configs/packed_rollout_audit_broad_bridge_sampled.yaml
+Adapter: outputs/phase6/format_sft_qwen25_math_1_5b_xml_broad_all_traces_from_phase5_1epoch/adapter_or_model
+Dataset: outputs/phase6/packed_calibrated_heldout_clean_xml_pair_64_seed0.jsonl
+Output: outputs/phase6/packed_rollout_audit_broad_bridge_sampled.jsonl
+Samples per prompt: 4
+Temperature: 0.7
+Max new tokens: 512
+```
+
+Result:
+
+```text
+prompts: 64
+samples: 256
+variant_examples: 512
+accuracy: 0.5469
+family_accuracy: 0.4219
+parse_complete_rate: 0.9922
+answer_count_mismatch_rate: 0.0078
+suspicious_rate: 0.1523
+reward_mean: 0.5867
+reward_std: 0.4418
+contrast_prompt_count: 9
+passes_audit_gate: true
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Suspicious |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 0.0000 | 0.0000 | 0.9773 | 0.0227 | 0.7500 |
+| `missing_average` | 0.8684 | 0.7500 | 1.0000 | 0.0000 | 0.0132 |
+| `rational_linear_equation` | 0.6607 | 0.4554 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_system_target` | 0.0000 | 0.0000 | 0.9583 | 0.0417 | 0.2083 |
+
+Contrast prompt groups:
+
+```text
+missing_average:
+fam_000022, fam_000144, fam_000110
+
+rational_linear_equation:
+fam_000112, fam_000039, fam_000013, fam_000001, fam_000038, fam_000171
+```
+
+The new family types produced no prompt-level correct/incorrect contrast. The sampled learning signal still comes entirely from the original two family types.
+
+Representative sampled malformed modes:
+
+```text
+chinese_remainder: sampled trace can enter an increment/search loop and miss XML before the token cap.
+rational_system_target: sampled trace can enter a degenerate zero-coefficient elimination loop and miss XML before the token cap.
+```
+
+Interpretation:
+
+The sampled audit passes the formal gate because parse completeness is high, reward variance is non-degenerate, and there are contrast prompts:
+
+```text
+parse_complete_rate: 0.9922
+reward_std: 0.4418
+contrast_prompt_count: 9
+```
+
+But this should not be treated as readiness for broad Iso-RLVR. The contrast prompts are not broad. They are all `missing_average` and `rational_linear_equation`. `chinese_remainder` and `rational_system_target` are now mostly verifier-compatible, but they are not yet useful RL targets under this bridge.
+
+Conclusion:
+
+The broad parser interface is repaired enough for deterministic eval and mostly stable under sampling. The next blocker is capability/contrast for the new family types, especially `chinese_remainder`. Do not run the broad independent-versus-iso GRPO matrix until at least one new family type has non-trivial sampled correctness and prompt-level contrast.
+
 ## First Smoke Pass Condition
 
 The first TRL smoke passes if:
@@ -920,9 +1122,18 @@ broad iso parse_complete_rate: 0.8906
 rational_system_target parse_complete_rate: 0.0000 in both arms
 ```
 
-Do not sweep `lambda_iso` yet. First stabilize the broad interface by adding trace or format-bridge coverage for the heldout calibrated family types, especially `rational_system_target`. Then rerun the broad eval before any reward sweep.
+The broad all-traces bridge repaired that interface failure:
 
-The `rational_linear_equation` baseline is still known and should be improved later as a targeted recovery workstream, but the immediate blocker is broader family-type interface stability.
+```text
+broad bridge deterministic parse_complete_rate: 1.0000
+broad bridge sampled parse_complete_rate: 0.9922
+```
+
+Do not sweep `lambda_iso` yet. The next blocker is not parser compliance; it is broad-family capability and contrast. `chinese_remainder` remains at `0.0000` accuracy, `rational_system_target` remains near zero, and sampled contrast still comes only from `missing_average` and `rational_linear_equation`.
+
+Before broad GRPO, improve the new-family bridge so at least one of `chinese_remainder` or `rational_system_target` produces non-trivial sampled correctness and prompt-level contrast.
+
+The `rational_linear_equation` baseline is still known and should be improved later as a targeted recovery workstream, but the immediate blocker is new-family capability and sampled contrast.
 
 The current Phase 6 thesis:
 
@@ -930,6 +1141,6 @@ The current Phase 6 thesis:
 Same stable reward interface.
 Real GRPO trainer confirmed.
 Iso-RLVR comparison replicated on two seeds.
-Broad eval exposed unseen-family interface gaps.
-Stabilize broad family coverage before sweeping.
+Broad parser interface repaired with all-family traces.
+New-family capability and contrast must improve before broad GRPO.
 ```

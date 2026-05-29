@@ -1,0 +1,17 @@
+model_name: Qwen/Qwen2.5-Math-1.5B
+adapter_path: outputs/phase6/format_sft_qwen25_math_1_5b_xml_broad_all_traces_from_phase5_1epoch/adapter_or_model
+dataset_path: outputs/phase6/packed_calibrated_heldout_clean_xml_pair_64_seed0.jsonl
+output_path: outputs/phase6/packed_rollout_audit_broad_bridge_sampled.jsonl
+samples_per_prompt: 4
+max_new_tokens: 512
+temperature: 0.7
+top_p: 1.0
+device: auto
+resume: false
+parse_complete_threshold: 0.95
+reward_std_threshold: 0.05
+max_malformed_samples: 20
+format_reward: 0.05
+missing_format_penalty: -0.10
+extra_answer_penalty: 0.10
+length_penalty_weight: 0.05
