@@ -39,6 +39,63 @@ def test_parse_xml_answer_block():
     assert parsed.complete
 
 
+def test_parse_think_plus_xml_answer_block():
+    parsed = parse_packed_answers(
+        """
+        <think>
+        I will solve silently. Answer 1: 999. \\boxed{999}
+        </think>
+        <answers>
+        <answer_1>3</answer_1>
+        <answer_2>7</answer_2>
+        </answers>
+        """,
+        expected_count=2,
+    )
+
+    assert parsed.answers == ["3", "7"]
+    assert parsed.mode == "xml"
+    assert parsed.complete
+
+
+def test_parse_ignores_answers_inside_think_without_answer_block():
+    parsed = parse_packed_answers(
+        r"""
+        <think>
+        Answer 1: 3
+        Answer 2: 7
+        \boxed{3}
+        \boxed{7}
+        </think>
+        """,
+        expected_count=2,
+    )
+
+    assert parsed.answers == [None, None]
+    assert parsed.mode == "missing"
+    assert not parsed.complete
+
+
+def test_parse_uses_final_xml_answer_block_only():
+    parsed = parse_packed_answers(
+        """
+        <answers>
+        <answer_1>99</answer_1>
+        <answer_2>99</answer_2>
+        </answers>
+        <answers>
+        <answer_1>3</answer_1>
+        <answer_2>7</answer_2>
+        </answers>
+        """,
+        expected_count=2,
+    )
+
+    assert parsed.answers == ["3", "7"]
+    assert parsed.extra_answers == []
+    assert parsed.complete
+
+
 def test_parse_xml_fraction_answers():
     parsed = parse_packed_answers(
         r"""

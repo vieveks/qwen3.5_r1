@@ -1,6 +1,6 @@
 # Phase 7: Free Reasoning With Structured Final Answers
 
-Status: design stub; do not implement before Phase 6 is closed
+Status: active implementation log and working spec
 
 Date: 2026-05-29
 
@@ -244,7 +244,46 @@ Pass condition:
 all parser and reward adapter tests pass
 ```
 
-### Experiment 7.2: Empty-Think SFT Bridge
+Result:
+
+```text
+Implemented.
+Parser: src/iso_rlvr/rewards/packed_answer.py
+Tests: tests/test_packed_answer.py, tests/test_packed_iso_reward.py
+```
+
+Parser behavior now strips well-formed `<think>...</think>` blocks before any answer extraction. XML parsing also uses only the final `<answers>...</answers>` block, so earlier answer-like strings or draft answer blocks cannot override the verifier-facing final answer block.
+
+The tests verify that:
+
+- valid `<think>` plus `<answers>` parses correctly
+- `Answer 1: ...` and `\boxed{...}` inside `<think>` are ignored
+- completions with correct answers only inside `<think>` receive no correctness credit
+- malformed values inside `<answers>` are still rejected
+- the final `<answers>` block is the only XML answer block used for scoring
+
+Targeted test result:
+
+```text
+tests/test_packed_answer.py: 20 passed
+tests/test_packed_iso_reward.py: 11 passed
+tests/test_packed_grpo_trl.py: 5 passed
+```
+
+Broader reward/eval regression result:
+
+```text
+tests/test_packed_diagnostics.py: 9 passed
+tests/test_packed_eval_summary.py: 5 passed
+tests/test_packed_rollout_audit.py: 4 passed
+tests/test_packed_grpo_lite.py: 4 passed
+```
+
+Conclusion:
+
+The Phase 7 parser/reward isolation gate is passed. The verifier now scores only final answers and does not leak reward through the reasoning channel.
+
+### Experiment 7.2: Minimal-Think SFT Bridge
 
 Goal:
 
@@ -256,6 +295,7 @@ Target:
 
 ```xml
 <think>
+Let me solve this.
 </think>
 <answers>
 ...

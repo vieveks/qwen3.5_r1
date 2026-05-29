@@ -137,3 +137,19 @@ def test_packed_reward_values_validates_batch_lengths():
 def test_score_requires_gold_answers():
     with pytest.raises(ValueError, match="gold_answers must not be empty"):
         score_packed_completion("Answer 1: 3", [])
+
+
+def test_score_does_not_credit_answers_inside_think():
+    scored = score_packed_completion(
+        """
+        <think>
+        Answer 1: 3
+        Answer 2: 7
+        </think>
+        """,
+        ["3", "7"],
+    )
+
+    assert scored.parse.answers == [None, None]
+    assert scored.correctness == [False, False]
+    assert scored.reward < 0

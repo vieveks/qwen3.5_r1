@@ -11,7 +11,15 @@ XML_ANSWER_PATTERN = re.compile(
     r"<answer_(\d+)>\s*(.*?)\s*</answer_\1>",
     re.IGNORECASE | re.DOTALL,
 )
+XML_ANSWERS_BLOCK_PATTERN = re.compile(
+    r"<answers\b[^>]*>(.*?)</answers>",
+    re.IGNORECASE | re.DOTALL,
+)
 XML_WRAPPER_PATTERN = re.compile(r"</?answers\b", re.IGNORECASE)
+THINK_BLOCK_PATTERN = re.compile(
+    r"<think\b[^>]*>.*?</think>",
+    re.IGNORECASE | re.DOTALL,
+)
 
 INDEXED_PATTERNS = [
     re.compile(
@@ -87,10 +95,12 @@ def _parse_indexed_answers(text: str, expected_count: int) -> PackedAnswerParse 
 
 
 def _parse_xml_answers(text: str, expected_count: int) -> PackedAnswerParse | None:
-    matches = list(XML_ANSWER_PATTERN.finditer(text))
-    if not matches and not XML_WRAPPER_PATTERN.search(text):
+    answer_blocks = list(XML_ANSWERS_BLOCK_PATTERN.finditer(text))
+    if not answer_blocks and not XML_WRAPPER_PATTERN.search(text):
         return None
 
+    answer_text = answer_blocks[-1].group(1) if answer_blocks else text
+    matches = list(XML_ANSWER_PATTERN.finditer(answer_text))
     answers: list[str | None] = [None] * expected_count
     extra_answers: list[str] = []
     for match in matches:
@@ -131,19 +141,25 @@ def parse_packed_answers(text: str, expected_count: int) -> PackedAnswerParse:
     if expected_count <= 0:
         raise ValueError("expected_count must be positive.")
 
-    xml = _parse_xml_answers(text, expected_count)
+    answer_surface = _strip_think_blocks(text)
+
+    xml = _parse_xml_answers(answer_surface, expected_count)
     if xml is not None:
         return xml
 
-    indexed = _parse_indexed_answers(text, expected_count)
+    indexed = _parse_indexed_answers(answer_surface, expected_count)
     if indexed is not None:
         return indexed
 
-    boxed = _parse_boxed_answers(text, expected_count)
+    boxed = _parse_boxed_answers(answer_surface, expected_count)
     if boxed is not None:
         return boxed
 
     return _empty_parse(expected_count, mode="missing")
+
+
+def _strip_think_blocks(text: str) -> str:
+    return THINK_BLOCK_PATTERN.sub("", text)
 
 
 def _parse_problem_sections(text: str) -> list[tuple[int, str]]:
