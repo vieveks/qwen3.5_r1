@@ -323,6 +323,126 @@ answer_count_mismatch_rate <= 0.05
 
 This experiment does not need to improve accuracy.
 
+Result:
+
+```text
+Implemented.
+Builder mode: --minimal-think
+Train dataset: outputs/phase7/format_sft_pair_xml_minimal_think_train.jsonl
+Heldout dataset: outputs/phase7/format_sft_pair_xml_minimal_think_heldout.jsonl
+Packed train: outputs/phase7/packed_calibrated_train_xml_pair_minimal_think_train.jsonl
+Packed heldout: outputs/phase7/packed_calibrated_train_xml_pair_minimal_think_heldout.jsonl
+Train rows: 180
+Heldout rows: 20
+Family types: missing_average, rational_linear_equation, rational_system_target, chinese_remainder
+```
+
+Training config:
+
+```text
+Config: configs/format_sft_qwen25_math_1_5b_minimal_think_all_families_from_phase5_1epoch.yaml
+Base model: Qwen/Qwen2.5-Math-1.5B
+Initial adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+Rows: 180
+Epochs: 1
+Max steps: 90
+Batch size: 2
+Learning rate: 1e-4
+Max sequence length: 1536
+Output: outputs/phase7/format_sft_qwen25_math_1_5b_minimal_think_all_families_from_phase5_1epoch/adapter_or_model
+```
+
+Final logged training losses:
+
+| Step | Loss |
+| ---: | ---: |
+| 80 | 0.0493 |
+| 81 | 0.1178 |
+| 82 | 0.0636 |
+| 83 | 0.1040 |
+| 84 | 0.0680 |
+| 85 | 0.1033 |
+| 86 | 0.0521 |
+| 87 | 0.1011 |
+| 88 | 0.0640 |
+| 89 | 0.0825 |
+
+Deterministic broad eval:
+
+```text
+Config: configs/packed_eval_phase7_minimal_think_bridge_512.yaml
+Dataset: outputs/phase6/packed_calibrated_heldout_clean_xml_pair_64_seed0.jsonl
+Max new tokens: 512
+examples: 64
+variant_examples: 128
+accuracy: 0.1094
+family_accuracy: 0.1094
+parse_complete_rate: 0.9844
+answer_count_mismatch_rate: 0.0156
+suspicious_rate: 0.8906
+think_block_rate: 0.8438
+nontrivial_think_block_rate: 0.3281
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Think block | Non-trivial think |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 1.0000 | 0.0000 |
+| `missing_average` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 0.9474 | 0.0526 |
+| `rational_linear_equation` | 0.2500 | 0.2500 | 1.0000 | 0.0000 | 0.8929 | 0.7143 |
+| `rational_system_target` | 0.0000 | 0.0000 | 0.8333 | 0.1667 | 0.0000 | 0.0000 |
+
+Representative behavior:
+
+```xml
+<think>
+Let me solve this.
+</think>
+<answers>
+<answer_1>60</answer_1>
+<answer_2>60</answer_2>
+</answers>
+```
+
+Gold:
+
+```text
+["63", "63"]
+```
+
+Another rational-linear completion showed the model extending the anchor but not doing real reasoning:
+
+```xml
+<think>
+Let me solve this.
+Let me think...
+</think>
+<answers>
+<answer_1>7/2</answer_1>
+<answer_2>7/2</answer_2>
+</answers>
+```
+
+Gold:
+
+```text
+["11/2", "11/2"]
+```
+
+Conclusion:
+
+The minimal-think bridge passed the narrow interface gate:
+
+```text
+parse_complete_rate: 0.9844
+answer_count_mismatch_rate: 0.0156
+```
+
+But it failed as a capability-preserving bridge. Accuracy collapsed from the Phase 6 broad v3 bridge baseline (`0.5703`) to `0.1094`, and the two previously working families regressed badly. The generic think anchor taught the tag surface, but it also removed the deterministic reasoning paths that were carrying arithmetic.
+
+This result should not be treated as a successful Phase 7 initialization for GRPO. The sampled audit below is still useful as a confirmation that there is no hard-family learning signal.
+
 ### Experiment 7.3: No-Training Sampled Rollout Audit
 
 Goal:
@@ -355,6 +475,68 @@ at least one hard family has non-zero sampled accuracy
 at least one hard family has correctness-level prompt contrast
 malformed modes are not dominated by missing final <answers>
 ```
+
+Result:
+
+```text
+Config: configs/packed_rollout_audit_phase7_minimal_think_hard_sampled.yaml
+Dataset: outputs/phase7/packed_hard_heldout_clean_xml_pair_17_seed0.jsonl
+Adapter: outputs/phase7/format_sft_qwen25_math_1_5b_minimal_think_all_families_from_phase5_1epoch/adapter_or_model
+Hard-family prompts: 17
+Samples per prompt: 4
+Samples: 68
+Max new tokens: 512
+Temperature: 0.7
+```
+
+Result:
+
+```text
+accuracy: 0.0000
+family_accuracy: 0.0000
+parse_complete_rate: 0.9559
+answer_count_mismatch_rate: 0.0441
+suspicious_rate: 0.9559
+reward_mean: 0.0369
+reward_std: 0.0366
+contrast_prompt_count: 0
+think_block_rate: 0.6029
+nontrivial_think_block_rate: 0.1471
+passes_audit_gate: false
+```
+
+By family type:
+
+| Family type | Accuracy | Parse complete | Mismatch | Think block | Non-trivial think |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 0.0000 | 1.0000 | 0.0000 | 0.7045 | 0.0455 |
+| `rational_system_target` | 0.0000 | 0.8750 | 0.1250 | 0.4167 | 0.3333 |
+
+Observed malformed rational-system pattern:
+
+```text
+The model wrote algebraic expressions containing x or y inside <answer_*> tags.
+The strict numeric grammar correctly rejected those values.
+```
+
+Example rejected answer values:
+
+```xml
+<answer_1>-39/40 - y / 2</answer_1>
+<answer_2>23/20 - 9y</answer_2>
+```
+
+Conclusion:
+
+The minimal-think bridge does not create a usable hard-family RL signal:
+
+```text
+hard-family sampled accuracy: 0.0000
+contrast_prompt_count: 0
+reward_std: 0.0366
+```
+
+Do not run Experiment 7.4 from this adapter. GRPO would have no correctness contrast to optimize and would mostly reinforce shallow formatting behavior.
 
 ### Experiment 7.4: Tiny Think-GRPO Smoke
 
@@ -403,7 +585,23 @@ Do not mix these claims.
 
 Finish and preserve the Phase 6 narrow result as the main result.
 
-Use Phase 7 to explore `<think> + <answers>` only after Phase 6 is documented and committed.
+The first minimal-think bridge was useful but failed as a GRPO starting point. It proved that the parser/reward contract works with `<think> + <answers>`, but it also showed that one epoch of answer-only minimal-think SFT overwrites too much of the Phase 5 reasoning bridge.
+
+Do not proceed to think-GRPO from the current minimal-think adapter.
+
+The next Phase 7 attempt should preserve reasoning capability while adding the two-tag contract. Candidate fixes:
+
+- use a much smaller contract-only update, such as fewer steps or lower learning rate
+- mix minimal-think rows with replay of the Phase 5 all-traces rows
+- wrap existing Phase 5 traces inside `<think>` only for the two working families while keeping hard-family think blocks generic
+- test prompt-only `<think>` scaffolding from the Phase 5 adapter before another SFT run
+
+The key lesson:
+
+```text
+Minimal think SFT teaches the tag contract, but by itself it is too answer-only.
+The next bridge must preserve the reasoning behavior that Phase 5 built.
+```
 
 The Phase 7 thesis:
 

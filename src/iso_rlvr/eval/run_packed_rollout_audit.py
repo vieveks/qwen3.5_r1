@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from iso_rlvr.eval.packed_diagnostics import diagnose_packed_parse
 from iso_rlvr.eval.run_eval import generate_one
-from iso_rlvr.eval.run_packed_eval import build_generation_prompt
+from iso_rlvr.eval.run_packed_eval import build_generation_prompt, think_block_diagnostics
 from iso_rlvr.io import load_yaml, read_jsonl
 from iso_rlvr.modeling import count_completion_tokens, load_causal_lm
 from iso_rlvr.rewards.packed_iso import PackedRewardConfig, score_packed_completion
@@ -66,6 +66,8 @@ def summarize_rollout_records(
             "contrast_prompt_count": 0,
             "has_prompt_level_contrast": False,
             "passes_audit_gate": False,
+            "think_block_rate": 0.0,
+            "nontrivial_think_block_rate": 0.0,
         }
 
     rewards = [float(record["reward"]) for record in records]
@@ -111,6 +113,14 @@ def summarize_rollout_records(
                 record["diagnostics"]["suspicious"] for record in type_records
             )
             / len(type_records),
+            "think_block_rate": sum(
+                record.get("has_think_block", False) for record in type_records
+            )
+            / len(type_records),
+            "nontrivial_think_block_rate": sum(
+                record.get("nontrivial_think_block", False) for record in type_records
+            )
+            / len(type_records),
         }
 
     return {
@@ -126,6 +136,12 @@ def summarize_rollout_records(
         )
         / len(records),
         "suspicious_rate": sum(record["diagnostics"]["suspicious"] for record in records)
+        / len(records),
+        "think_block_rate": sum(record.get("has_think_block", False) for record in records)
+        / len(records),
+        "nontrivial_think_block_rate": sum(
+            record.get("nontrivial_think_block", False) for record in records
+        )
         / len(records),
         "reward_mean": statistics.fmean(rewards),
         "reward_std": reward_std,
@@ -177,6 +193,7 @@ def run_packed_rollout_audit(config_path: Path) -> None:
                     config=reward_cfg,
                 )
                 diagnostics = diagnose_packed_parse(scored.parse, row["gold_answers"])
+                think_diagnostics = think_block_diagnostics(parsed_response)
                 result = {
                     **row,
                     "sample_idx": sample_idx,
@@ -199,6 +216,7 @@ def run_packed_rollout_audit(config_path: Path) -> None:
                     "extra_answer_penalty": scored.extra_answer_penalty,
                     "length_penalty": scored.length_penalty,
                     "response_tokens": response_tokens,
+                    **think_diagnostics,
                     "diagnostics": {
                         "repeated_answer": diagnostics.repeated_answer,
                         "copied_answer_indices": diagnostics.copied_answer_indices,

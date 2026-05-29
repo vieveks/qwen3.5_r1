@@ -18,6 +18,10 @@ def build_xml_completion(gold_answers: list[str]) -> str:
     return f"<answers>\n{answer_lines}\n</answers>"
 
 
+def build_minimal_think_completion(gold_answers: list[str]) -> str:
+    return f"<think>\nLet me solve this.\n</think>\n{build_xml_completion(gold_answers)}"
+
+
 def _format_fraction(value: Fraction) -> str:
     if value.denominator == 1:
         return str(value.numerator)
@@ -222,10 +226,14 @@ def build_sft_row(
     rational_system_traces: bool = False,
     chinese_remainder_traces: bool = False,
     force_answer_only: bool = False,
+    minimal_think: bool = False,
 ) -> dict[str, Any]:
     gold_answers = [str(answer) for answer in row["gold_answers"]]
     xml_completion = build_xml_completion(gold_answers)
-    if (
+    if minimal_think:
+        completion = build_minimal_think_completion(gold_answers)
+        target_style = "minimal_think_xml"
+    elif (
         missing_average_traces
         and row["family_type"] == "missing_average"
         and not force_answer_only
@@ -279,6 +287,7 @@ def build_sft_rows(
     rational_system_traces: bool = False,
     chinese_remainder_traces: bool = False,
     include_answer_only_copy: bool = False,
+    minimal_think: bool = False,
 ) -> list[dict[str, Any]]:
     if (
         include_answer_only_copy
@@ -293,6 +302,7 @@ def build_sft_rows(
                 rational_linear_traces=rational_linear_traces,
                 rational_system_traces=rational_system_traces,
                 chinese_remainder_traces=chinese_remainder_traces,
+                minimal_think=minimal_think,
             ),
         ]
     return [
@@ -302,6 +312,7 @@ def build_sft_rows(
             rational_linear_traces=rational_linear_traces,
             rational_system_traces=rational_system_traces,
             chinese_remainder_traces=chinese_remainder_traces,
+            minimal_think=minimal_think,
         )
     ]
 
@@ -340,6 +351,7 @@ def build_format_sft_dataset(
     rational_system_traces: bool = False,
     chinese_remainder_traces: bool = False,
     include_answer_only_copy: bool = False,
+    minimal_think: bool = False,
 ) -> None:
     rows = read_jsonl(input_path)
     if max_examples is not None:
@@ -360,6 +372,7 @@ def build_format_sft_dataset(
             rational_system_traces=rational_system_traces,
             chinese_remainder_traces=chinese_remainder_traces,
             include_answer_only_copy=include_answer_only_copy,
+            minimal_think=minimal_think,
         )
     ]
     heldout_rows = [
@@ -372,6 +385,7 @@ def build_format_sft_dataset(
             rational_system_traces=rational_system_traces,
             chinese_remainder_traces=chinese_remainder_traces,
             include_answer_only_copy=include_answer_only_copy,
+            minimal_think=minimal_think,
         )
     ]
 
@@ -399,6 +413,7 @@ def main() -> None:
     parser.add_argument("--rational-system-traces", action="store_true")
     parser.add_argument("--chinese-remainder-traces", action="store_true")
     parser.add_argument("--include-answer-only-copy", action="store_true")
+    parser.add_argument("--minimal-think", action="store_true")
     args = parser.parse_args()
 
     build_format_sft_dataset(
@@ -415,6 +430,7 @@ def main() -> None:
         rational_system_traces=args.rational_system_traces,
         chinese_remainder_traces=args.chinese_remainder_traces,
         include_answer_only_copy=args.include_answer_only_copy,
+        minimal_think=args.minimal_think,
     )
 
 

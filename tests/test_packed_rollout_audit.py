@@ -62,7 +62,11 @@ def test_reward_histogram_buckets_rewards():
 def test_summarize_rollout_records_requires_prompt_level_contrast_for_gate():
     summary = summarize_rollout_records(
         [
-            _record("fam_1", "missing_average", [True, True], 1.05),
+            {
+                **_record("fam_1", "missing_average", [True, True], 1.05),
+                "has_think_block": True,
+                "nontrivial_think_block": False,
+            },
             _record("fam_1", "missing_average", [True, False], 0.55),
             _record("fam_2", "rational_linear_equation", [False, False], 0.05),
             _record("fam_2", "rational_linear_equation", [False, False], 0.05),
@@ -80,7 +84,10 @@ def test_summarize_rollout_records_requires_prompt_level_contrast_for_gate():
     assert summary["contrast_prompt_count"] == 1
     assert summary["contrast_prompt_ids"] == ["fam_1"]
     assert summary["passes_audit_gate"]
+    assert summary["think_block_rate"] == 0.25
+    assert summary["nontrivial_think_block_rate"] == 0.0
     assert summary["by_family_type"]["missing_average"]["accuracy"] == 0.75
+    assert summary["by_family_type"]["missing_average"]["think_block_rate"] == 0.5
 
 
 def test_summarize_rollout_records_fails_without_prompt_level_contrast():

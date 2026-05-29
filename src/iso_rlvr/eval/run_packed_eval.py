@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from peft import PeftModel
@@ -13,6 +14,36 @@ from iso_rlvr.eval.run_eval import generate_one
 from iso_rlvr.io import load_yaml, read_jsonl
 from iso_rlvr.modeling import count_completion_tokens, load_causal_lm
 from iso_rlvr.rewards.packed_iso import score_packed_completion
+
+
+THINK_BLOCK_PATTERN = re.compile(
+    r"<think\b[^>]*>(.*?)</think>",
+    re.IGNORECASE | re.DOTALL,
+)
+MINIMAL_THINK_ANCHOR = "Let me solve this."
+
+
+def think_block_diagnostics(completion: str) -> dict[str, Any]:
+    matches = list(THINK_BLOCK_PATTERN.finditer(completion))
+    if not matches:
+        return {
+            "has_think_block": False,
+            "nontrivial_think_block": False,
+            "think_text": "",
+        }
+
+    think_text = matches[-1].group(1).strip()
+    normalized_think = _normalize_think_text(think_text)
+    return {
+        "has_think_block": True,
+        "nontrivial_think_block": bool(normalized_think)
+        and normalized_think != _normalize_think_text(MINIMAL_THINK_ANCHOR),
+        "think_text": think_text,
+    }
+
+
+def _normalize_think_text(text: str) -> str:
+    return " ".join(text.strip().split()).lower()
 
 
 def build_generation_prompt(tokenizer: Any, row_prompt: str, cfg: dict[str, Any]) -> str:
@@ -56,6 +87,8 @@ def summarize_packed_eval_rows(
             "avg_reward": 0.0,
             "answer_count_mismatch_rate": 0.0,
             "suspicious_rate": 0.0,
+            "think_block_rate": 0.0,
+            "nontrivial_think_block_rate": 0.0,
         }
         if include_by_family_type:
             summary["by_family_type"] = {}
@@ -75,6 +108,11 @@ def summarize_packed_eval_rows(
         )
         / len(rows),
         "suspicious_rate": sum(row["diagnostics"]["suspicious"] for row in rows) / len(rows),
+        "think_block_rate": sum(row.get("has_think_block", False) for row in rows) / len(rows),
+        "nontrivial_think_block_rate": sum(
+            row.get("nontrivial_think_block", False) for row in rows
+        )
+        / len(rows),
     }
     if include_by_family_type:
         by_type: dict[str, list[dict[str, Any]]] = {}
@@ -123,6 +161,7 @@ def run_packed_eval(config_path: Path) -> None:
                 response_tokens=response_tokens,
             )
             diagnostics = diagnose_packed_parse(scored.parse, row["gold_answers"])
+            think_diagnostics = think_block_diagnostics(parsed_response)
             result = {
                 **row,
                 "apply_chat_template": bool(cfg.get("apply_chat_template", False)),
@@ -144,6 +183,7 @@ def run_packed_eval(config_path: Path) -> None:
                 "extra_answer_penalty": scored.extra_answer_penalty,
                 "length_penalty": scored.length_penalty,
                 "response_tokens": response_tokens,
+                **think_diagnostics,
                 "diagnostics": {
                     "repeated_answer": diagnostics.repeated_answer,
                     "copied_answer_indices": diagnostics.copied_answer_indices,

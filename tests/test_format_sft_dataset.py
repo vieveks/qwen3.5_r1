@@ -1,6 +1,7 @@
 from iso_rlvr.data.build_format_sft_dataset import (
     build_chinese_remainder_trace,
     build_missing_average_trace,
+    build_minimal_think_completion,
     build_rational_linear_trace,
     build_rational_system_trace,
     build_format_sft_dataset,
@@ -117,6 +118,20 @@ def test_build_xml_completion_uses_answer_only_xml_block():
     )
 
 
+def test_build_minimal_think_completion_uses_generic_anchor():
+    completion = build_minimal_think_completion(["16/5", "-3"])
+
+    assert completion == (
+        "<think>\n"
+        "Let me solve this.\n"
+        "</think>\n"
+        "<answers>\n"
+        "<answer_1>16/5</answer_1>\n"
+        "<answer_2>-3</answer_2>\n"
+        "</answers>"
+    )
+
+
 def test_build_sft_row_preserves_reward_context_and_adds_text_field():
     row = build_sft_row(_packed_row("fam_000001", answer="16/5"))
 
@@ -134,6 +149,21 @@ def test_build_sft_row_preserves_reward_context_and_adds_text_field():
         "</answers>"
     )
     assert row["text"] == f"{row['prompt']}\n{row['completion']}"
+
+
+def test_build_sft_row_can_use_minimal_think_for_any_family():
+    row = build_sft_row(_chinese_remainder_row(), minimal_think=True)
+
+    assert row["target_style"] == "minimal_think_xml"
+    assert row["completion"] == (
+        "<think>\n"
+        "Let me solve this.\n"
+        "</think>\n"
+        "<answers>\n"
+        "<answer_1>58</answer_1>\n"
+        "<answer_2>58</answer_2>\n"
+        "</answers>"
+    )
 
 
 def test_build_missing_average_trace_uses_prompt_metadata_values():
@@ -400,3 +430,26 @@ def test_build_format_sft_dataset_can_trace_all_broad_families(tmp_path):
         "rational_system_trace_xml",
         "chinese_remainder_trace_xml",
     ]
+
+
+def test_build_format_sft_dataset_can_make_minimal_think_rows(tmp_path):
+    input_path = tmp_path / "packed.jsonl"
+    train_out = tmp_path / "sft_train.jsonl"
+    rows = [
+        _missing_average_row("fam_000001"),
+        _rational_linear_row("fam_000020"),
+        _rational_system_row("fam_000030"),
+        _chinese_remainder_row("fam_000040"),
+    ]
+    write_jsonl(input_path, rows)
+
+    build_format_sft_dataset(
+        input_path,
+        train_out,
+        heldout_fraction=0.0,
+        minimal_think=True,
+    )
+
+    sft_rows = read_jsonl(train_out)
+    assert [row["target_style"] for row in sft_rows] == ["minimal_think_xml"] * 4
+    assert all(row["completion"].startswith("<think>\nLet me solve this.\n</think>") for row in sft_rows)
