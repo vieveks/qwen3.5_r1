@@ -1,6 +1,6 @@
 # Phase 6: Proper GRPO On Stabilized Packed XML Interface
 
-Status: active planning and implementation spec
+Status: narrow Iso-RLVR result complete; broad-family expansion deferred
 
 Date: 2026-05-28
 
@@ -29,7 +29,19 @@ reward_std: non-degenerate
 
 Phase 6 therefore resumes the original RLVR goal, but on the stabilized packed XML interface.
 
-The first priority is not reward tuning. The first priority is replacing `grpo_lite` with proper TRL `GRPOTrainer` integration and proving that the real trainer preserves the same interface stability.
+The first priority was not reward tuning. It was replacing `grpo_lite` with proper TRL `GRPOTrainer` integration and proving that the real trainer preserves the same interface stability.
+
+That trainer path now works, and the narrow two-family Iso-RLVR result is complete:
+
+```text
+Independent family_accuracy: 0.5625
+Best Iso family_accuracy: 0.6875 at lambda_iso = 1.00
+Best family_accuracy delta: +0.1250
+parse_complete_rate: 1.0000 in every narrow run
+sampled malformed completions: 0
+```
+
+The broader four-family expansion is deferred. `chinese_remainder` and `rational_system_target` are parse-stable under the latest bridge, but they are not yet useful RL targets because sampled correctness and correctness-level contrast remain too weak.
 
 ## Starting Point
 
@@ -1426,6 +1438,115 @@ Conclusion:
 
 The compact CRT k-trace is the right interface direction and should replace the v2 candidate-list trace. It repairs parse stability, but it does not yet teach enough CRT capability for broad GRPO. The next bridge should either add more CRT SFT rows, simplify CRT further to answer-only plus one check, or use a smaller-modulus CRT curriculum before returning to full calibrated CRT rows.
 
+### Experiment 6.12: Narrow Lambda Sweep On Working Families
+
+Goal:
+
+```text
+Complete the narrow Phase 6 Iso-RLVR comparison before starting any broader architecture work.
+```
+
+Scope decision:
+
+```text
+Use only the two Phase 5/early Phase 6 working families:
+- missing_average
+- rational_linear_equation
+```
+
+Rationale:
+
+The two-family surface is the clean controlled test of the core Iso-RLVR hypothesis. The broader calibrated families are scientifically interesting, but `chinese_remainder` and `rational_system_target` are not yet RL-ready. Letting those families block the narrow result would conflate two separate questions:
+
+```text
+Does Iso-RLVR improve family consistency on a stable verifier interface?
+Can a 1.5B model learn harder new family types from the current bridge?
+```
+
+Phase 6 answers the first question. The second question moves to a later architecture/capability workstream.
+
+Design:
+
+```text
+Trainer: TRL GRPOTrainer
+Base model: Qwen/Qwen2.5-Math-1.5B
+Initialization for all arms: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+Train dataset: outputs/phase5/packed_stage1_pair_xml_all_traces_train.jsonl
+Eval dataset: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+Seed: 23
+Steps: 30
+Num generations: 4
+Temperature: 0.7
+Max completion length: 256
+Learning rate: 1e-6
+Beta: 0.04
+```
+
+The sweep keeps everything fixed except `lambda_iso`:
+
+| Arm | Config | Family weights |
+| --- | --- | --- |
+| Independent | `configs/packed_grpo_trl_all_traces_independent_30step.yaml` | `0.00 + 0.00` |
+| Iso 0.25 | `configs/packed_grpo_trl_all_traces_iso_lam_0_25_30step.yaml` | `0.125 + 0.125` |
+| Iso 0.50 | `configs/packed_grpo_trl_all_traces_iso_lam_0_50_30step.yaml` | `0.25 + 0.25` |
+| Iso 1.00 | `configs/packed_grpo_trl_all_traces_iso_lam_1_00_30step.yaml` | `0.50 + 0.50` |
+
+Final heldout results:
+
+| Metric | Independent | Iso 0.25 | Iso 0.50 | Iso 1.00 |
+| --- | ---: | ---: | ---: | ---: |
+| Accuracy | 0.7188 | 0.7500 | 0.7500 | 0.7813 |
+| Family accuracy | 0.5625 | 0.6250 | 0.6250 | 0.6875 |
+| Parse complete | 1.0000 | 1.0000 | 1.0000 | 1.0000 |
+| Mismatch rate | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| Suspicious rate | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| Reward mean | 0.7612 | 0.9576 | 1.1217 | 1.5365 |
+| Reward std | 0.3616 | 0.4693 | 0.5775 | 0.7816 |
+| Sampled contrast steps | 10 / 30 | 10 / 30 | 12 / 30 | 12 / 30 |
+| Sampled malformed completions | 0 | 0 | 0 | 0 |
+
+By family type:
+
+| Arm | `missing_average` accuracy | `missing_average` family acc. | `rational_linear_equation` accuracy | `rational_linear_equation` family acc. |
+| --- | ---: | ---: | ---: | ---: |
+| Independent | 0.9167 | 0.8333 | 0.6000 | 0.4000 |
+| Iso 0.25 | 1.0000 | 1.0000 | 0.6000 | 0.4000 |
+| Iso 0.50 | 1.0000 | 1.0000 | 0.6000 | 0.4000 |
+| Iso 1.00 | 1.0000 | 1.0000 | 0.6500 | 0.5000 |
+
+Comparison against independent:
+
+| Arm | Accuracy delta | Family accuracy delta | Parse delta |
+| --- | ---: | ---: | ---: |
+| Iso 0.25 | +0.0312 | +0.0625 | 0.0000 |
+| Iso 0.50 | +0.0312 | +0.0625 | 0.0000 |
+| Iso 1.00 | +0.0625 | +0.1250 | 0.0000 |
+
+Interpretation:
+
+The narrow lambda sweep strengthens the Iso-RLVR result. Every iso arm improves family accuracy over independent RLVR while preserving the verifier interface perfectly:
+
+```text
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+sampled malformed completions: 0
+```
+
+The best narrow result is `lambda_iso=1.00`, which improves family accuracy by `+0.1250` and accuracy by `+0.0625` over the independent arm.
+
+The improvement at `lambda_iso=0.25` and `0.50` comes entirely from `missing_average`. At `lambda_iso=1.00`, `missing_average` remains perfect and `rational_linear_equation` improves from `0.6000` to `0.6500` variant accuracy and from `0.4000` to `0.5000` family accuracy.
+
+Conclusion:
+
+The narrow Phase 6 claim is complete:
+
+```text
+On a stable packed XML verifier interface, proper TRL GRPO with an isomorphic family reward improves family accuracy over independent GRPO across matched runs, without parse regression.
+```
+
+Do not expand the Phase 6 claim to `chinese_remainder` or `rational_system_target`. Those families remain parse-stable but capability-not-ready under the current bridge.
+
 ## First Smoke Pass Condition
 
 The first TRL smoke passes if:
@@ -1474,9 +1595,19 @@ v3 sampled parse_complete_rate: 0.9883
 v3 answer_count_mismatch_rate: 0.0117
 ```
 
-Do not sweep `lambda_iso` yet. The next blocker is not global parser compliance; it is broad-family capability and correctness contrast. `chinese_remainder` is still `0.0000` sampled accuracy with no correctness-level prompt contrast. `rational_system_target` has only `0.0208` sampled accuracy and one correctness-contrast prompt.
+The narrow lambda sweep is now complete. On the two working families, every iso arm improved family accuracy over independent GRPO, and `lambda_iso=1.00` was best:
 
-Before broad GRPO, improve the new-family bridge so the new family types produce enough sampled correctness for reward learning. The next highest-value fix is likely a CRT curriculum or a simpler CRT target that does not invite sampled search loops, plus a separate rational-system arithmetic simplification pass.
+```text
+Independent family_accuracy: 0.5625
+Iso 0.25 family_accuracy: 0.6250
+Iso 0.50 family_accuracy: 0.6250
+Iso 1.00 family_accuracy: 0.6875
+parse_complete_rate: 1.0000 in all narrow arms
+```
+
+The remaining blocker is broad-family capability and correctness contrast, not global parser compliance. `chinese_remainder` is still `0.0000` sampled accuracy with no correctness-level prompt contrast. `rational_system_target` has only `0.0208` sampled accuracy and one correctness-contrast prompt.
+
+Do not let the broad-family blocker delay the narrow Phase 6 result. Treat `chinese_remainder` and `rational_system_target` as parse-stable but not RL-ready, and move broad-family reasoning work to Phase 7 or later.
 
 The `rational_linear_equation` baseline is still known and should be improved later as a targeted recovery workstream, but the immediate blocker is new-family capability and sampled contrast.
 
@@ -1486,7 +1617,8 @@ The current Phase 6 thesis:
 Same stable reward interface.
 Real GRPO trainer confirmed.
 Iso-RLVR comparison replicated on two seeds.
+Narrow lambda sweep completed; best lambda_iso is 1.00.
 Broad parser interface repaired with all-family traces.
 Compact CRT trace repaired v2 parser regression.
-New-family capability and correctness contrast must improve before broad GRPO.
+New-family capability and correctness contrast are deferred to Phase 7 or later.
 ```
