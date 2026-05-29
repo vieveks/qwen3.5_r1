@@ -1089,7 +1089,7 @@ Conclusion:
 
 The broad parser interface is repaired enough for deterministic eval and mostly stable under sampling. The next blocker is capability/contrast for the new family types, especially `chinese_remainder`. Do not run the broad independent-versus-iso GRPO matrix until at least one new family type has non-trivial sampled correctness and prompt-level contrast.
 
-### Experiment 6.9: Planned New-Family Capability Bridge
+### Experiment 6.9: New-Family Capability Bridge Plan
 
 Goal:
 
@@ -1173,6 +1173,259 @@ at least one new family contributes prompt-level contrast
 
 Do not run a lambda sweep or broad independent-versus-iso GRPO matrix until this condition is met.
 
+### Experiment 6.10: Broad Bridge v2 Candidate-Walk CRT Trace
+
+Goal:
+
+```text
+Fix chinese_remainder by replacing answer verification with a constructive walk.
+```
+
+Pre-implementation token-budget check:
+
+```text
+Tokenizer: Qwen/Qwen2.5-Math-1.5B
+CRT rows checked: 16
+prompt tokens: min 125, median 127, max 130
+full constructive CRT completion tokens: min 169, median 214, max 272
+capped constructive CRT completion tokens: min 169, median 204, max 221
+```
+
+Conclusion from the token check:
+
+```text
+An uncapped CRT candidate walk can exceed a 256-token completion budget.
+A capped candidate walk fits comfortably under 256 completion tokens.
+```
+
+Implementation:
+
+```text
+Builder: src/iso_rlvr/data/build_format_sft_dataset.py
+Tests: tests/test_format_sft_dataset.py
+Train config: configs/format_sft_qwen25_math_1_5b_xml_broad_all_traces_v2_from_phase5_1epoch.yaml
+Eval config: configs/packed_eval_phase6_broad_bridge_v2_512.yaml
+```
+
+The v2 CRT target used a bounded candidate list:
+
+```text
+Problem 1 start: x = 7
+Problem 1 step by first modulus: +17
+Problem 1 candidates: 7, 24, 41
+Problem 1 check: 41 mod 21 = 20
+Problem 1 least value: x = 41
+```
+
+For longer searches, the target used an ellipsis:
+
+```text
+Problem 2 candidates: 1, 6, 11, 16, 21, 26, ..., 41
+```
+
+The rational-system trace was also shortened to a fixed three-line elimination form:
+
+```text
+Problem 1 eliminate y: -18x = -144/5, so x = -8/5
+Problem 1 eliminate x: -18y = 144/5, so y = 8/5
+Problem 1 target: x - y = -8/5 - 8/5 = -16/5
+```
+
+Targeted test result:
+
+```text
+tests/test_format_sft_dataset.py tests/test_format_sft.py: 22 passed
+```
+
+Training:
+
+```text
+Base adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+Rows: 180
+Steps: 90
+Learning rate: 1e-4
+Adapter output: outputs/phase6/format_sft_qwen25_math_1_5b_xml_broad_all_traces_v2_from_phase5_1epoch/adapter_or_model
+```
+
+Deterministic broad eval result:
+
+```text
+Config: configs/packed_eval_phase6_broad_bridge_v2_512.yaml
+accuracy: 0.5703
+family_accuracy: 0.4531
+parse_complete_rate: 0.8750
+answer_count_mismatch_rate: 0.1250
+suspicious_rate: 0.1875
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Suspicious |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 0.0000 | 0.0000 | 0.2727 | 0.7273 | 0.7273 |
+| `missing_average` | 0.8684 | 0.7368 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_linear_equation` | 0.7143 | 0.5357 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_system_target` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 0.6667 |
+
+Observed failure mode:
+
+```text
+The model ignored the capped candidate-list target and expanded the numeric sequence until max_new_tokens.
+Several CRT completions never reached XML.
+```
+
+Representative failure:
+
+```text
+Problem 1 candidates: 0, 15, 30, 45, 60, 75, 90, 105, ... 1380, 1
+```
+
+Conclusion:
+
+The candidate-walk idea was directionally useful but the comma-separated numeric list created a strong continuation attractor. The v2 bridge is not usable because it reintroduced the exact Phase 4 failure mode: long trace loops that prevent XML emission.
+
+Do not use candidate-list CRT traces again unless constrained decoding or explicit stop control is added.
+
+### Experiment 6.11: Broad Bridge v3 Compact CRT k-Trace
+
+Goal:
+
+```text
+Preserve the constructive CRT signal without teaching an open-ended numeric-list continuation.
+```
+
+Implementation change:
+
+```text
+Replace CRT candidate lists with a compact x = r + mk form and one chosen k.
+```
+
+New CRT target shape:
+
+```text
+Problem 1 form: x = 7 + 17k
+Problem 1 choose k = 2: x = 41
+Problem 1 check: 41 mod 21 = 20
+Problem 1 least value: x = 41
+```
+
+The builder now asserts:
+
+```text
+moduli are coprime
+answer is the least nonnegative solution modulo mod_a * mod_b
+gold answer matches metadata answer
+chosen k reaches the gold answer from the first residue
+no smaller k satisfies the second congruence
+```
+
+Implementation:
+
+```text
+Builder: src/iso_rlvr/data/build_format_sft_dataset.py
+Tests: tests/test_format_sft_dataset.py
+Train config: configs/format_sft_qwen25_math_1_5b_xml_broad_all_traces_v3_from_phase5_1epoch.yaml
+Eval config: configs/packed_eval_phase6_broad_bridge_v3_512.yaml
+Audit config: configs/packed_rollout_audit_broad_bridge_v3_sampled.yaml
+```
+
+Targeted test result:
+
+```text
+tests/test_format_sft_dataset.py tests/test_format_sft.py: 22 passed
+```
+
+Dataset:
+
+```text
+Train rows: 180
+missing_average_trace_xml: 54
+rational_linear_trace_xml: 92
+rational_system_trace_xml: 20
+chinese_remainder_trace_xml: 14
+```
+
+Training:
+
+```text
+Base adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+Rows: 180
+Steps: 90
+Learning rate: 1e-4
+Adapter output: outputs/phase6/format_sft_qwen25_math_1_5b_xml_broad_all_traces_v3_from_phase5_1epoch/adapter_or_model
+```
+
+Deterministic broad eval result:
+
+```text
+Config: configs/packed_eval_phase6_broad_bridge_v3_512.yaml
+accuracy: 0.5703
+family_accuracy: 0.4375
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0625
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Suspicious |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 0.0455 | 0.0000 | 1.0000 | 0.0000 | 0.0000 |
+| `missing_average` | 0.8684 | 0.7368 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_linear_equation` | 0.6964 | 0.5000 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_system_target` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 0.6667 |
+
+Sampled rollout audit result:
+
+```text
+Config: configs/packed_rollout_audit_broad_bridge_v3_sampled.yaml
+samples: 256
+accuracy: 0.5469
+family_accuracy: 0.4141
+parse_complete_rate: 0.9883
+answer_count_mismatch_rate: 0.0117
+suspicious_rate: 0.0352
+reward_mean: 0.5876
+reward_std: 0.4361
+contrast_prompt_count: 13
+passes_audit_gate: true
+```
+
+By family type on sampled audit:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Suspicious |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 0.0000 | 0.0000 | 0.9318 | 0.0682 | 0.0682 |
+| `missing_average` | 0.8355 | 0.6842 | 1.0000 | 0.0000 | 0.0132 |
+| `rational_linear_equation` | 0.6786 | 0.4821 | 1.0000 | 0.0000 | 0.0000 |
+| `rational_system_target` | 0.0208 | 0.0000 | 1.0000 | 0.0000 | 0.2083 |
+
+Correctness-level prompt contrast:
+
+| Family type | Prompts with correct/incorrect contrast |
+| --- | ---: |
+| `missing_average` | 5 |
+| `rational_linear_equation` | 13 |
+| `rational_system_target` | 1 |
+| `chinese_remainder` | 0 |
+
+Interpretation:
+
+V3 fixes the v2 interface regression. Deterministic parse is perfect, sampled parse is above gate, and the remaining malformed samples are limited to three CRT sampled completions.
+
+However, v3 is still not a broad GRPO-ready bridge. CRT has no sampled correctness contrast and zero sampled accuracy. Rational-system has only one prompt with correctness contrast and very low sampled accuracy. Most usable gradient signal still comes from the original two family types.
+
+Remaining sampled CRT malformed mode:
+
+```text
+The model can still turn the compact k-trace into a multi-step search loop under sampling.
+It may emit several choose/check lines, then miss XML before the token cap.
+```
+
+Conclusion:
+
+The compact CRT k-trace is the right interface direction and should replace the v2 candidate-list trace. It repairs parse stability, but it does not yet teach enough CRT capability for broad GRPO. The next bridge should either add more CRT SFT rows, simplify CRT further to answer-only plus one check, or use a smaller-modulus CRT curriculum before returning to full calibrated CRT rows.
+
 ## First Smoke Pass Condition
 
 The first TRL smoke passes if:
@@ -1206,16 +1459,24 @@ broad iso parse_complete_rate: 0.8906
 rational_system_target parse_complete_rate: 0.0000 in both arms
 ```
 
-The broad all-traces bridge repaired that interface failure:
+The first broad all-traces bridge repaired that interface failure for the original broad trace set:
 
 ```text
 broad bridge deterministic parse_complete_rate: 1.0000
 broad bridge sampled parse_complete_rate: 0.9922
 ```
 
-Do not sweep `lambda_iso` yet. The next blocker is not parser compliance; it is broad-family capability and contrast. `chinese_remainder` remains at `0.0000` accuracy, `rational_system_target` remains near zero, and sampled contrast still comes only from `missing_average` and `rational_linear_equation`.
+The v2 CRT candidate-walk bridge failed because comma-separated candidate lists caused sequence loops and dropped deterministic parse to `0.8750`. The v3 compact CRT k-trace fixed that regression:
 
-Before broad GRPO, improve the new-family bridge so at least one of `chinese_remainder` or `rational_system_target` produces non-trivial sampled correctness and prompt-level contrast.
+```text
+v3 deterministic parse_complete_rate: 1.0000
+v3 sampled parse_complete_rate: 0.9883
+v3 answer_count_mismatch_rate: 0.0117
+```
+
+Do not sweep `lambda_iso` yet. The next blocker is not global parser compliance; it is broad-family capability and correctness contrast. `chinese_remainder` is still `0.0000` sampled accuracy with no correctness-level prompt contrast. `rational_system_target` has only `0.0208` sampled accuracy and one correctness-contrast prompt.
+
+Before broad GRPO, improve the new-family bridge so the new family types produce enough sampled correctness for reward learning. The next highest-value fix is likely a CRT curriculum or a simpler CRT target that does not invite sampled search loops, plus a separate rational-system arithmetic simplification pass.
 
 The `rational_linear_equation` baseline is still known and should be improved later as a targeted recovery workstream, but the immediate blocker is new-family capability and sampled contrast.
 
@@ -1226,5 +1487,6 @@ Same stable reward interface.
 Real GRPO trainer confirmed.
 Iso-RLVR comparison replicated on two seeds.
 Broad parser interface repaired with all-family traces.
-New-family capability and contrast must improve before broad GRPO.
+Compact CRT trace repaired v2 parser regression.
+New-family capability and correctness contrast must improve before broad GRPO.
 ```

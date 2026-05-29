@@ -190,17 +190,11 @@ def test_build_rational_system_trace_uses_fixed_elimination_method():
     trace = build_rational_system_trace(_rational_system_row())
 
     assert trace == (
-        "Problem 1 equations: 2x + (3)y = -2; 1x + (-1)y = 3/2\n"
-        "Problem 1 eliminate y: -1 times first minus 3 times second gives -5x = -5/2\n"
-        "Problem 1 solve x: x = -5/2 / -5 = 1/2\n"
-        "Problem 1 eliminate x: 2 times second minus 1 times first gives -5y = 5\n"
-        "Problem 1 solve y: y = 5 / -5 = -1\n"
+        "Problem 1 eliminate y: -5x = -5/2, so x = 1/2\n"
+        "Problem 1 eliminate x: -5y = 5, so y = -1\n"
         "Problem 1 target: x + y = (1/2) + (-1) = -1/2\n\n"
-        "Problem 2 equations: -3x + (2)y = -7/2; 5x + (1)y = 3/2\n"
-        "Problem 2 eliminate y: 1 times first minus 2 times second gives -13x = -13/2\n"
-        "Problem 2 solve x: x = -13/2 / -13 = 1/2\n"
-        "Problem 2 eliminate x: -3 times second minus 5 times first gives -13y = 13\n"
-        "Problem 2 solve y: y = 13 / -13 = -1\n"
+        "Problem 2 eliminate y: -13x = -13/2, so x = 1/2\n"
+        "Problem 2 eliminate x: -13y = 13, so y = -1\n"
         "Problem 2 target: x + y = (1/2) + (-1) = -1/2"
     )
 
@@ -209,7 +203,7 @@ def test_build_sft_row_can_add_rational_system_trace_before_xml():
     row = build_sft_row(_rational_system_row(), rational_system_traces=True)
 
     assert row["target_style"] == "rational_system_trace_xml"
-    assert row["completion"].startswith("Problem 1 equations: 2x + (3)y = -2")
+    assert row["completion"].startswith("Problem 1 eliminate y: -5x = -5/2")
     assert row["completion"].endswith(
         "<answers>\n"
         "<answer_1>-1/2</answer_1>\n"
@@ -222,13 +216,13 @@ def test_build_chinese_remainder_trace_uses_numeric_solution_and_assertions():
     trace = build_chinese_remainder_trace(_chinese_remainder_row())
 
     assert trace == (
-        "Problem 1 range: 0 <= x < 7 x 9 = 63\n"
-        "Problem 1 check first congruence: 58 mod 7 = 2\n"
-        "Problem 1 check second congruence: 58 mod 9 = 4\n"
+        "Problem 1 form: x = 2 + 7k\n"
+        "Problem 1 choose k = 8: x = 58\n"
+        "Problem 1 check: 58 mod 9 = 4\n"
         "Problem 1 least value: x = 58\n\n"
-        "Problem 2 range: 0 <= x < 11 x 13 = 143\n"
-        "Problem 2 check first congruence: 58 mod 11 = 3\n"
-        "Problem 2 check second congruence: 58 mod 13 = 6\n"
+        "Problem 2 form: x = 3 + 11k\n"
+        "Problem 2 choose k = 5: x = 58\n"
+        "Problem 2 check: 58 mod 13 = 6\n"
         "Problem 2 least value: x = 58"
     )
 
@@ -250,7 +244,7 @@ def test_build_sft_row_can_add_chinese_remainder_trace_before_xml():
     row = build_sft_row(_chinese_remainder_row(), chinese_remainder_traces=True)
 
     assert row["target_style"] == "chinese_remainder_trace_xml"
-    assert row["completion"].startswith("Problem 1 range: 0 <= x < 7 x 9 = 63")
+    assert row["completion"].startswith("Problem 1 form: x = 2 + 7k")
     assert row["completion"].endswith(
         "<answers>\n"
         "<answer_1>58</answer_1>\n"

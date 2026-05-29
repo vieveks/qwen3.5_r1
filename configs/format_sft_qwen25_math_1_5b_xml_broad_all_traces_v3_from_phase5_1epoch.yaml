@@ -1,0 +1,14 @@
+model_name: Qwen/Qwen2.5-Math-1.5B
+adapter_path: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+dataset_path: outputs/phase6/format_sft_pair_xml_broad_all_traces_v3_train.jsonl
+output_dir: outputs/phase6/format_sft_qwen25_math_1_5b_xml_broad_all_traces_v3_from_phase5_1epoch
+device: auto
+seed: 17
+max_examples: 180
+max_steps: 90
+epochs: 1
+batch_size: 2
+gradient_accumulation_steps: 1
+learning_rate: 0.0001
+max_length: 1536
+separator: "\n"

@@ -157,11 +157,8 @@ def build_rational_system_trace(row: dict[str, Any]) -> str:
         traces.append(
             "\n".join(
                 [
-                    f"Problem {idx} equations: {a}x + ({b})y = {_format_fraction(e)}; {c}x + ({d})y = {_format_fraction(f)}",
-                    f"Problem {idx} eliminate y: {d} times first minus {b} times second gives {det}x = {_format_fraction(x_rhs)}",
-                    f"Problem {idx} solve x: x = {_format_fraction(x_rhs)} / {det} = {_format_fraction(x)}",
-                    f"Problem {idx} eliminate x: {a} times second minus {c} times first gives {det}y = {_format_fraction(y_rhs)}",
-                    f"Problem {idx} solve y: y = {_format_fraction(y_rhs)} / {det} = {_format_fraction(y)}",
+                    f"Problem {idx} eliminate y: {det}x = {_format_fraction(x_rhs)}, so x = {_format_fraction(x)}",
+                    f"Problem {idx} eliminate x: {det}y = {_format_fraction(y_rhs)}, so y = {_format_fraction(y)}",
                     f"Problem {idx} target: {target_name} = {target_expression} = {gold_answer}",
                 ]
             )
@@ -197,12 +194,19 @@ def build_chinese_remainder_trace(row: dict[str, Any]) -> str:
                 f"{answer} != {gold_answer}"
             )
 
+        if (answer - rem_a) % mod_a != 0:
+            raise ValueError("chinese_remainder answer is not reachable from first residue.")
+        chosen_k = (answer - rem_a) // mod_a
+        for prior_k in range(chosen_k):
+            if (rem_a + mod_a * prior_k) % mod_b == rem_b:
+                raise ValueError("chinese_remainder answer is not the least nonnegative solution.")
+
         traces.append(
             "\n".join(
                 [
-                    f"Problem {idx} range: 0 <= x < {mod_a} x {mod_b} = {product}",
-                    f"Problem {idx} check first congruence: {answer} mod {mod_a} = {rem_a}",
-                    f"Problem {idx} check second congruence: {answer} mod {mod_b} = {rem_b}",
+                    f"Problem {idx} form: x = {rem_a} + {mod_a}k",
+                    f"Problem {idx} choose k = {chosen_k}: x = {gold_answer}",
+                    f"Problem {idx} check: {answer} mod {mod_b} = {rem_b}",
                     f"Problem {idx} least value: x = {gold_answer}",
                 ]
             )
