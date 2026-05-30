@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from iso_rlvr.eval.packed_diagnostics import diagnose_packed_parse
 from iso_rlvr.eval.run_eval import generate_one
-from iso_rlvr.eval.run_packed_eval import build_generation_prompt
+from iso_rlvr.eval.run_packed_eval import build_generation_prompt, think_block_diagnostics
 from iso_rlvr.eval.run_packed_rollout_audit import summarize_rollout_records
 from iso_rlvr.io import load_yaml, read_jsonl
 from iso_rlvr.modeling import count_completion_tokens, load_causal_lm
@@ -121,12 +121,14 @@ def score_rollout(
         config=reward_cfg,
     )
     diagnostics = diagnose_packed_parse(scored.parse, row["gold_answers"])
+    think_diagnostics = think_block_diagnostics(parsed_response)
     return {
         **row,
         "sample_idx": sample_idx,
         "response_prefix": response_prefix,
         "model_response": response,
         "parsed_response": parsed_response,
+        **think_diagnostics,
         "parsed_answers": scored.parse.answers,
         "missing_indices": scored.parse.missing_indices,
         "extra_answers": scored.parse.extra_answers,

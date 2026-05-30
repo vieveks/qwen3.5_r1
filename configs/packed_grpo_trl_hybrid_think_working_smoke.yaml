@@ -1,0 +1,35 @@
+model_name: Qwen/Qwen2.5-Math-1.5B
+adapter_path: outputs/phase7/format_sft_qwen25_math_1_5b_hybrid_think_all_families_from_phase5_1epoch/adapter_or_model
+train_dataset: outputs/phase7/packed_calibrated_train_xml_pair_hybrid_think_train.jsonl
+eval_dataset: outputs/phase7/packed_calibrated_heldout_clean_think_pair_64_seed0.jsonl
+output_dir: outputs/phase7/packed_grpo_trl_hybrid_think_working_smoke
+device: auto
+seed: 23
+include_train_family_types:
+  - missing_average
+  - rational_linear_equation
+max_steps: 10
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 1
+num_generations: 4
+max_prompt_length: 768
+max_completion_length: 512
+max_new_tokens: 512
+temperature: 0.7
+top_p: 1.0
+learning_rate: 0.000001
+beta: 0.04
+max_grad_norm: 1.0
+bf16: true
+logging_steps: 1
+save_steps: 10
+save_strategy: steps
+save_total_limit: 1
+family_bonus_enabled: false
+parse_complete_threshold: 0.95
+reward_std_threshold: 0.05
+format_reward: 0.05
+missing_format_penalty: -0.10
+extra_answer_penalty: 0.10
+length_penalty_weight: 0.05
+token_cap: 512

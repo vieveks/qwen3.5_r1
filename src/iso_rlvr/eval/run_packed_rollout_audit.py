@@ -30,6 +30,30 @@ def pure_format_correctness_reward_config(cfg: dict[str, Any]) -> PackedRewardCo
     )
 
 
+def parse_family_type_filter(value: Any) -> set[str] | None:
+    if value is None:
+        return None
+    values = value if isinstance(value, list) else [value]
+    family_types: set[str] = set()
+    for item in values:
+        family_types.update(part.strip() for part in str(item).split(",") if part.strip())
+    return family_types or None
+
+
+def filter_rows_by_family_type(
+    rows: list[dict[str, Any]],
+    include_family_types: set[str] | None,
+) -> list[dict[str, Any]]:
+    if include_family_types is None:
+        return rows
+    filtered = [row for row in rows if str(row.get("family_type", "")) in include_family_types]
+    if not filtered:
+        raise ValueError(
+            f"Family type filter {sorted(include_family_types)} removed all rows."
+        )
+    return filtered
+
+
 def reward_histogram(rewards: list[float], bucket_size: float = 0.25) -> dict[str, int]:
     if not rewards:
         return {}
@@ -161,6 +185,10 @@ def summarize_rollout_records(
 def run_packed_rollout_audit(config_path: Path) -> None:
     cfg = load_yaml(config_path)
     rows = read_jsonl(cfg["dataset_path"])
+    rows = filter_rows_by_family_type(
+        rows,
+        parse_family_type_filter(cfg.get("include_family_types")),
+    )
     if cfg.get("max_examples"):
         rows = rows[: int(cfg["max_examples"])]
 

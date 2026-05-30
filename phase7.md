@@ -678,14 +678,43 @@ reward_std: 0.1299
 
 However, this is still a weak GRPO starting point. The audit passes technically, but the signal is concentrated in one CRT prompt, rational-system accuracy remains `0.0000`, mismatch is above the preferred gate, and suspicious rate remains very high. Treat this as a partial recovery, not as a ready mainline training setup.
 
-### Experiment 7.5: Tiny Think-GRPO Smoke
-
-Run only after a sampled audit produces enough hard-family correctness contrast to justify optimization.
+### Experiment 7.5: Working-Family Think-GRPO Smoke
 
 Goal:
 
 ```text
-Check whether GRPO updates improve final answers without collapsing the answer interface.
+Check whether GRPO can update the hybrid-think adapter on the two working families without collapsing the two-tag interface.
+```
+
+Rationale:
+
+Hard-family contrast is still too sparse for meaningful optimization. The cleaner Phase 7 question is therefore:
+
+```text
+Does the Phase 6 Iso-RLVR setup still behave sensibly when the policy has a <think> channel?
+```
+
+Before the independent-versus-iso comparison, run a small trainer smoke on the working families only.
+
+Config:
+
+```text
+Config: configs/packed_grpo_trl_hybrid_think_working_smoke.yaml
+Trainer: TRL GRPOTrainer
+Base model: Qwen/Qwen2.5-Math-1.5B
+Initial adapter: outputs/phase7/format_sft_qwen25_math_1_5b_hybrid_think_all_families_from_phase5_1epoch/adapter_or_model
+Train dataset: outputs/phase7/packed_calibrated_train_xml_pair_hybrid_think_train.jsonl
+Train family filter: missing_average, rational_linear_equation
+Eval dataset: outputs/phase7/packed_calibrated_heldout_clean_think_pair_64_seed0.jsonl
+Eval family filter: none
+Steps: 10
+Num generations: 4
+Temperature: 0.7
+Max completion length: 512
+Learning rate: 1e-6
+Beta: 0.04
+Max grad norm: 1.0
+Family bonus: disabled
 ```
 
 First reward:
@@ -695,13 +724,229 @@ correctness + format only
 family bonus disabled
 ```
 
-Pass condition:
+Implementation notes:
 
 ```text
-post-update parse_complete_rate >= 0.95
-no repeated malformed mode
-hard-family sampled contrast remains nonzero
+Trainer now supports include_train_family_types and include_eval_family_types.
+The smoke trains only on the two working families.
+CRT and rational_system_target remain eval spectators.
+TRL reward records now include think_block_rate and nontrivial_think_block_rate.
 ```
+
+Sampled training-batch result:
+
+```text
+reward calls: 10
+sampled completions: 40
+variant_examples: 80
+sampled accuracy: 0.7500
+sampled family_accuracy: 0.6750
+sampled parse_complete_rate: 0.8250
+sampled answer_count_mismatch_rate: 0.1750
+sampled suspicious_rate: 0.1750
+sampled think_block_rate: 0.8250
+sampled nontrivial_think_block_rate: 0.8250
+steps with within-prompt contrast: 5 / 10
+```
+
+Training reward-call summary:
+
+| Step | Reward mean | Reward std | Contrast prompts | Parse complete | Mismatch | Suspicious | Think block |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.0500 | 0.0000 | 0 | 1.0000 | 0.0000 | 0.0000 | 1.0000 |
+| 2 | 1.0500 | 0.0000 | 0 | 1.0000 | 0.0000 | 0.0000 | 1.0000 |
+| 3 | 0.6352 | 0.4726 | 1 | 0.7500 | 0.2500 | 0.2500 | 0.7500 |
+| 4 | 0.5431 | 0.0002 | 0 | 1.0000 | 0.0000 | 0.0000 | 1.0000 |
+| 5 | 0.4750 | 0.5750 | 1 | 0.5000 | 0.5000 | 0.5000 | 0.5000 |
+| 6 | 0.3474 | 0.4824 | 1 | 0.5000 | 0.5000 | 0.5000 | 0.5000 |
+| 7 | 1.0500 | 0.0000 | 0 | 1.0000 | 0.0000 | 0.0000 | 1.0000 |
+| 8 | 0.7625 | 0.4980 | 1 | 0.7500 | 0.2500 | 0.2500 | 0.7500 |
+| 9 | 1.0500 | 0.0000 | 0 | 1.0000 | 0.0000 | 0.0000 | 1.0000 |
+| 10 | 0.7625 | 0.4980 | 1 | 0.7500 | 0.2500 | 0.2500 | 0.7500 |
+
+Observed sampled failure mode:
+
+```text
+Some sampled completions were empty.
+The empty completions explain most of the parse and think-block failures.
+```
+
+Empty sampled completions appeared on:
+
+| Step | Family | Empty samples |
+| ---: | --- | ---: |
+| 5 | `rational_linear_equation` | 2 |
+| 6 | `rational_linear_equation` | 2 |
+
+Representative think blocks stayed close to the SFT trace format:
+
+```text
+Step 1 missing_average:
+Problem 1 sum needed...
+Problem 1 known sum...
+Problem 1 missing value...
+```
+
+```text
+Step 10 rational_linear_equation:
+Problem 1 isolate...
+Problem 1 divide...
+Problem 2 isolate...
+Problem 2 divide...
+```
+
+There is no strong evidence yet that 10 steps of GRPO changed the reasoning style. The successful sampled completions mostly retained the supervised deterministic traces.
+
+Standalone deterministic broad eval after saving:
+
+```text
+Config: configs/packed_eval_phase7_hybrid_think_working_smoke_final_512.yaml
+Adapter: outputs/phase7/packed_grpo_trl_hybrid_think_working_smoke/adapter_or_model
+Dataset: outputs/phase7/packed_calibrated_heldout_clean_think_pair_64_seed0.jsonl
+accuracy: 0.5391
+family_accuracy: 0.4219
+parse_complete_rate: 0.9844
+answer_count_mismatch_rate: 0.0156
+suspicious_rate: 0.3125
+think_block_rate: 0.9844
+nontrivial_think_block_rate: 0.9844
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Think block | Non-trivial think |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `chinese_remainder` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 1.0000 | 1.0000 |
+| `missing_average` | 0.8158 | 0.7368 | 1.0000 | 0.0000 | 1.0000 | 1.0000 |
+| `rational_linear_equation` | 0.6786 | 0.4643 | 0.9643 | 0.0357 | 0.9643 | 0.9643 |
+| `rational_system_target` | 0.0000 | 0.0000 | 1.0000 | 0.0000 | 1.0000 | 1.0000 |
+
+Comparison to hybrid bridge before GRPO:
+
+| Metric | Hybrid bridge | After 10-step working smoke | Delta |
+| --- | ---: | ---: | ---: |
+| Accuracy | 0.5312 | 0.5391 | +0.0079 |
+| Family accuracy | 0.4219 | 0.4219 | 0.0000 |
+| Parse complete | 0.9688 | 0.9844 | +0.0156 |
+| Think block | 0.9688 | 0.9844 | +0.0156 |
+
+Conclusion:
+
+```text
+The deterministic post-update interface is stable.
+The sampled training interface is not clean enough yet for the main comparison.
+```
+
+This smoke answers the immediate safety question: a few GRPO updates on the working families did not collapse the saved adapter under greedy broad eval. But sampled rollouts at `temperature: 0.7` still produce an empty-completion tail, with sampled parse completeness only `0.8250`. That is too noisy for the independent-versus-iso think-GRPO comparison.
+
+Next fix:
+
+```text
+Run a no-training sampled audit on the working families with lower temperature before the comparison.
+Try temperature 0.5 first, then 0.3 if empty completions remain.
+```
+
+### Experiment 7.6: Lower-Temperature Working-Family Rollout Audits
+
+Goal:
+
+```text
+Check whether the empty-completion tail is caused by high sampling temperature.
+```
+
+The comparison matrix should not start while sampled parse completeness is below the Phase 5/6 interface standard. Since the empty completions appeared under `temperature: 0.7`, two lower-temperature audits were run from the hybrid-think adapter before trying another GRPO run.
+
+#### Temperature 0.5 Audit
+
+Config:
+
+```text
+Config: configs/packed_rollout_audit_phase7_hybrid_think_working_temp_0_5.yaml
+Adapter: outputs/phase7/format_sft_qwen25_math_1_5b_hybrid_think_all_families_from_phase5_1epoch/adapter_or_model
+Dataset: outputs/phase7/packed_calibrated_heldout_clean_think_pair_64_seed0.jsonl
+Family filter: missing_average, rational_linear_equation
+Max examples: 16
+Samples per prompt: 4
+Temperature: 0.5
+Max new tokens: 512
+```
+
+Result:
+
+```text
+samples: 64
+accuracy: 0.6016
+family_accuracy: 0.4531
+parse_complete_rate: 0.8906
+answer_count_mismatch_rate: 0.1094
+suspicious_rate: 0.1719
+think_block_rate: 0.8906
+nontrivial_think_block_rate: 0.8906
+reward_std: 0.4367
+contrast_prompt_count: 5
+passes_audit_gate: false
+```
+
+By family type:
+
+| Family type | Accuracy | Parse complete | Mismatch | Think block |
+| --- | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.6667 | 1.0000 | 0.0000 | 1.0000 |
+| `rational_linear_equation` | 0.5179 | 0.7500 | 0.2500 | 0.7500 |
+
+#### Temperature 0.3 Smoke Audit
+
+Config:
+
+```text
+Config: configs/packed_rollout_audit_phase7_hybrid_think_working_temp_0_3_smoke.yaml
+Family filter: missing_average, rational_linear_equation
+Max examples: 8
+Samples per prompt: 4
+Temperature: 0.3
+Max new tokens: 512
+```
+
+Result:
+
+```text
+samples: 32
+accuracy: 0.5781
+family_accuracy: 0.5000
+parse_complete_rate: 0.8438
+answer_count_mismatch_rate: 0.1562
+suspicious_rate: 0.2812
+think_block_rate: 0.8438
+nontrivial_think_block_rate: 0.8438
+reward_std: 0.4884
+contrast_prompt_count: 2
+passes_audit_gate: false
+```
+
+By family type:
+
+| Family type | Accuracy | Parse complete | Mismatch | Think block |
+| --- | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.6562 | 1.0000 | 0.0000 | 1.0000 |
+| `rational_linear_equation` | 0.5000 | 0.6875 | 0.3125 | 0.6875 |
+
+Conclusion:
+
+Lowering temperature does not fix the sampled empty-completion tail. The problem is concentrated in `rational_linear_equation`; `missing_average` remains parse-complete and keeps nontrivial think blocks under sampling.
+
+Current diagnosis:
+
+```text
+The hybrid-think adapter is deterministic-eval stable, but sampled rational-linear rollouts can terminate immediately.
+This is a generation-control problem, not a verifier/parser problem.
+```
+
+Candidate fixes before the think-GRPO comparison:
+
+- Add explicit generation prefix support for TRL runs, likely `response_prefix: "<think>\n"`.
+- Ensure the reward scorer prepends the same prefix before parsing completions.
+- Run a no-training working-family audit with the prefix before any more GRPO.
+- If prefixing preserves accuracy and parse completeness, rerun the guarded working-family smoke.
 
 ## Scope Boundary
 
@@ -727,13 +972,16 @@ Finish and preserve the Phase 6 narrow result as the main result.
 
 The first minimal-think bridge was useful but failed as a GRPO starting point. It proved that the parser/reward contract works with `<think> + <answers>`, but it also showed that one epoch of answer-only minimal-think SFT overwrites too much of the Phase 5 reasoning bridge.
 
-The hybrid-think bridge is the current best Phase 7 adapter. It recovers most of the broad deterministic accuracy that minimal-think destroyed and creates one sampled hard-family contrast prompt, but the hard-family signal remains too sparse for a meaningful main GRPO run.
+The hybrid-think bridge is the current best Phase 7 adapter. It recovers most of the broad deterministic accuracy that minimal-think destroyed and creates one sampled hard-family contrast prompt, but the hard-family signal remains too sparse for a meaningful hard-family GRPO run.
 
-Do not proceed to a full think-GRPO experiment yet. Reasonable next checks are:
+The working-family GRPO smoke shows that the saved adapter stays stable under deterministic eval after updates, but sampled rollouts have too many empty completions. Lowering temperature to `0.5` and `0.3` did not fix the issue. Do not proceed to the independent-versus-iso think-GRPO comparison until sampled parse completeness is restored.
 
-- run a tiny guarded GRPO smoke only to test whether the one hard-family contrast prompt is stable under updates
+Reasonable next checks are:
+
+- add and test TRL-compatible response-prefix generation for `<think>\n`
+- rerun the working-family sampled audit with the prefix
+- rerun the working-family smoke only if prefixed sampling restores parse completeness
 - improve answer-tag hygiene for rational-system outputs
-- test a shorter or lower-temperature hard-family rollout to reduce malformed answers
 - increase hard-family SFT data before another GRPO attempt
 
 The key lesson:
@@ -741,6 +989,7 @@ The key lesson:
 ```text
 Minimal think SFT teaches the tag contract, but by itself it is too answer-only.
 Hybrid think SFT preserves more reasoning behavior, but hard-family correctness contrast is still sparse.
+Think-GRPO is close, but sampled rational-linear empty completions must be fixed before comparison runs.
 ```
 
 The Phase 7 thesis:

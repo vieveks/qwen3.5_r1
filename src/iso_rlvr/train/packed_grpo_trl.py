@@ -9,11 +9,36 @@ from transformers import AutoTokenizer
 from trl import GRPOConfig, GRPOTrainer
 
 from iso_rlvr.eval.packed_diagnostics import diagnose_packed_parse
+from iso_rlvr.eval.run_packed_eval import think_block_diagnostics
 from iso_rlvr.eval.run_packed_rollout_audit import summarize_rollout_records
 from iso_rlvr.io import load_yaml, read_jsonl
 from iso_rlvr.modeling import count_completion_tokens, load_causal_lm
 from iso_rlvr.rewards.packed_iso import PackedRewardConfig, score_packed_completion
 from iso_rlvr.train.packed_grpo_lite import evaluate_greedy
+
+
+def parse_family_type_filter(value: Any) -> set[str] | None:
+    if value is None:
+        return None
+    values = value if isinstance(value, list) else [value]
+    family_types: set[str] = set()
+    for item in values:
+        family_types.update(part.strip() for part in str(item).split(",") if part.strip())
+    return family_types or None
+
+
+def filter_rows_by_family_type(
+    rows: list[dict[str, Any]],
+    include_family_types: set[str] | None,
+) -> list[dict[str, Any]]:
+    if include_family_types is None:
+        return rows
+    filtered = [row for row in rows if str(row.get("family_type", "")) in include_family_types]
+    if not filtered:
+        raise ValueError(
+            f"Family type filter {sorted(include_family_types)} removed all rows."
+        )
+    return filtered
 
 
 def packed_trl_reward_config(cfg: dict[str, Any] | None = None) -> PackedRewardConfig:
@@ -146,6 +171,7 @@ def packed_trl_reward_records(
     rewards = []
     for idx, completion in enumerate(completions):
         text = _completion_to_text(completion)
+        think_diagnostics = think_block_diagnostics(text)
         scored = score_packed_completion(
             text,
             gold_answers[idx],
@@ -175,10 +201,12 @@ def packed_trl_reward_records(
             "family_type": family_type[idx],
             "format_component": scored.format_component,
             "gold_answers": list(gold_answers[idx]),
+            "has_think_block": think_diagnostics["has_think_block"],
             "length_penalty": scored.length_penalty,
             "metadata": _column_value(extra_columns, "metadata", idx, []),
             "missing_indices": scored.parse.missing_indices,
             "model_response": text,
+            "nontrivial_think_block": think_diagnostics["nontrivial_think_block"],
             "num_variants": num_variants[idx],
             "parse_complete": scored.parse.complete,
             "parse_mode": scored.parse.mode,
@@ -282,9 +310,17 @@ def train(config_path: Path) -> None:
     model = PeftModel.from_pretrained(model, cfg["adapter_path"], is_trainable=True)
 
     train_rows = read_jsonl(cfg["train_dataset"])
+    train_rows = filter_rows_by_family_type(
+        train_rows,
+        parse_family_type_filter(cfg.get("include_train_family_types")),
+    )
     if cfg.get("max_train_examples"):
         train_rows = train_rows[: int(cfg["max_train_examples"])]
     eval_rows = read_jsonl(cfg["eval_dataset"])
+    eval_rows = filter_rows_by_family_type(
+        eval_rows,
+        parse_family_type_filter(cfg.get("include_eval_family_types")),
+    )
     if cfg.get("max_eval_examples"):
         eval_rows = eval_rows[: int(cfg["max_eval_examples"])]
 
@@ -316,6 +352,7 @@ def train(config_path: Path) -> None:
         top_p=float(cfg.get("top_p", 1.0)),
         top_k=None,
         beta=float(cfg.get("beta", 0.04)),
+        max_grad_norm=float(cfg.get("max_grad_norm", 1.0)),
         log_completions=bool(cfg.get("log_completions", False)),
         scale_rewards=bool(cfg.get("scale_rewards", True)),
         seed=int(cfg.get("seed", 42)),

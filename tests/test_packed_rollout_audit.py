@@ -1,4 +1,6 @@
 from iso_rlvr.eval.run_packed_rollout_audit import (
+    filter_rows_by_family_type,
+    parse_family_type_filter,
     pure_format_correctness_reward_config,
     reward_histogram,
     summarize_rollout_records,
@@ -57,6 +59,30 @@ def test_reward_histogram_buckets_rewards():
         "[0.25,0.50)": 1,
         "[1.00,1.25)": 1,
     }
+
+
+def test_parse_family_type_filter_accepts_commas_and_lists():
+    assert parse_family_type_filter(["missing_average,rational_linear_equation"]) == {
+        "missing_average",
+        "rational_linear_equation",
+    }
+    assert parse_family_type_filter(["missing_average", "rational_linear_equation"]) == {
+        "missing_average",
+        "rational_linear_equation",
+    }
+    assert parse_family_type_filter(None) is None
+
+
+def test_filter_rows_by_family_type_keeps_requested_rows():
+    rows = [
+        {"family_type": "missing_average"},
+        {"family_type": "chinese_remainder"},
+        {"family_type": "rational_linear_equation"},
+    ]
+
+    filtered = filter_rows_by_family_type(rows, {"missing_average"})
+
+    assert filtered == [{"family_type": "missing_average"}]
 
 
 def test_summarize_rollout_records_requires_prompt_level_contrast_for_gate():
