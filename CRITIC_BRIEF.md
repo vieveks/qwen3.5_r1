@@ -33,6 +33,27 @@ The most important evidence is not a single run. It is the combination of:
 - monotonic lambda trend at seed 23
 - zero parse regression across the narrow runs
 
+## Current Results Table
+
+This is the table to use for the current report. It replaces the older Phase 2/3 `grpo_lite` table.
+
+| Run | Accuracy | Family accuracy |
+| --- | ---: | ---: |
+| Base all-traces adapter | 0.7500 | 0.6250 |
+| Independent 30-step, seed 23 | 0.7188 | 0.5625 |
+| Iso `lambda_iso=0.25`, seed 23 | 0.7500 | 0.6250 |
+| Iso `lambda_iso=0.50`, seed 23 | 0.7500 | 0.6250 |
+| Iso `lambda_iso=1.00`, seed 23 | 0.7813 | 0.6875 |
+| Independent 30-step, seed 37 | 0.7188 | 0.5625 |
+| Iso `lambda_iso=0.50`, seed 37 | 0.7500 | 0.6250 |
+
+Note:
+
+```text
+phase6.md records Iso lambda_iso=1.00 accuracy as 0.7813.
+If an older note says 0.7500 for that row, treat it as stale.
+```
+
 ## Main Phase 6 Table
 
 All runs below use the same base model, Phase 5 all-traces adapter initialization, train/eval split, trainer settings, and evaluation code. The only intentional variable in the sweep is the family reward scale.
@@ -159,6 +180,39 @@ sampled malformed completions: 0
 ```
 
 This is why the Phase 6 result is cleaner than the earlier Phase 2/3 evidence. The reward surface is now verifier-stable.
+
+## Current Code Architecture
+
+The current result is built on the packed XML RLVR path, not the old single-problem `grpo_lite` path.
+
+| Area | File | Responsibility |
+| --- | --- | --- |
+| Packed answer parser | `src/iso_rlvr/rewards/packed_answer.py` | Extracts strict XML answer blocks, normalizes numeric values, rejects malformed answer values. |
+| Packed reward | `src/iso_rlvr/rewards/packed_iso.py` | Scores packed completions with correctness, format, penalties, and optional family reward. |
+| Packed diagnostics | `src/iso_rlvr/eval/packed_diagnostics.py` | Tracks parse completeness, mismatch, suspicious patterns, repeated-answer diagnostics, and malformed cases. |
+| Packed eval | `src/iso_rlvr/eval/run_packed_eval.py` | Runs deterministic packed heldout evaluation and by-family summaries. |
+| Rollout audit | `src/iso_rlvr/eval/run_packed_rollout_audit.py` | Samples grouped completions before training and checks reward variance, contrast, and malformed modes. |
+| Format SFT builder | `src/iso_rlvr/data/build_format_sft_dataset.py` | Builds XML and trace-to-XML supervised bridge datasets. |
+| TRL trainer | `src/iso_rlvr/train/packed_grpo_trl.py` | Runs proper TRL `GRPOTrainer`, wraps the stateless packed reward function, logs per-prompt reward distributions. |
+| Historical trainer | `src/iso_rlvr/train/grpo_lite.py` | Early local scaffold; useful historically but not the current result path. |
+
+Current training stack:
+
+```text
+trl: 0.17.0
+transformers: 5.0.0.dev0
+accelerate: 1.10.0
+datasets: 4.0.0
+peft: 0.17.0
+```
+
+Current model path:
+
+```text
+Base model: Qwen/Qwen2.5-Math-1.5B
+Policy initialization: Phase 5 all-traces LoRA adapter
+Adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+```
 
 ## Reward Contract
 
@@ -309,6 +363,39 @@ These caveats should stay in the final write-up.
 8. Discuss broad-family failures as scope boundaries, not contradictions.
 9. Summarize Phase 7 as future work on free reasoning channels.
 10. End with limitations and next experiments.
+
+## Reproduction Commands
+
+Install and test:
+
+```bash
+conda run -n pytorch_5070ti python -m pip install -e .
+conda run -n pytorch_5070ti pytest tests
+```
+
+Run the proper TRL trainer smoke:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config configs/packed_grpo_trl_all_traces_smoke.yaml
+```
+
+Run the seed 23 independent-vs-iso matrix:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config configs/packed_grpo_trl_all_traces_independent_30step.yaml
+conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config configs/packed_grpo_trl_all_traces_iso_lam_0_25_30step.yaml
+conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config configs/packed_grpo_trl_all_traces_iso_lam_0_50_30step.yaml
+conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config configs/packed_grpo_trl_all_traces_iso_lam_1_00_30step.yaml
+```
+
+Run the seed 37 confirmation pair:
+
+```bash
+conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config configs/packed_grpo_trl_all_traces_independent_30step_seed_37.yaml
+conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config configs/packed_grpo_trl_all_traces_iso_lam_0_50_30step_seed_37.yaml
+```
+
+The configs run final packed heldout eval after saving adapters. For standalone eval, use the matching `packed_eval_*` configs documented in `phase6.md`.
 
 ## Next Work
 
