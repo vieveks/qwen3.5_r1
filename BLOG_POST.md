@@ -1,12 +1,12 @@
 # RLVR Does Not Just Fail at Optimization. It Fails at the Interface.
 
-I started this project with a simple question: can reinforcement learning with verifiable rewards teach a model to solve the same underlying math rule across multiple surface variants, instead of just getting isolated answers right?
-
-That question became a lot more interesting than I expected. The first thing I learned was not about GRPO, reward weights, or clever math datasets. It was that the reward interface itself was the main bottleneck. If the model's answer cannot be parsed reliably, the verifier is not measuring reasoning. It is measuring accidents of formatting, truncation, and parser behavior.
+I started this project to test isomorphic reward shaping. I ended up discovering that most of my RL failures had nothing to do with the reward design. They were parser failures dressed up as training failures.
 
 The final result is narrow but clean: on a stabilized packed XML interface, an isomorphic family reward improved family accuracy over independent RLVR, with no parse regression. The best run improved family accuracy by `+0.1250` over the independent baseline.
 
 But the real story is how much work it took to make that number mean anything.
+
+Full experiment logs, configs, and phase documentation are in the repo: https://github.com/vieveks/qwen3.5_r1
 
 ## The Hypothesis
 
@@ -112,6 +112,8 @@ The lesson is blunt: before tuning reward weights, stabilize the reward interfac
 ## The Clean Result
 
 After the XML interface was stable, I replaced the local `grpo_lite` scaffold with proper TRL `GRPOTrainer`.
+
+Once the interface was stable, the actual GRPO experiment was surprisingly clean.
 
 The main Phase 6 experiment used two working family types:
 
@@ -269,3 +271,5 @@ Reward shaping third.
 If the parser is unreliable, the reward is not what you think it is. And if the reward is not what you think it is, RL will optimize the wrong thing very efficiently.
 
 That was the most useful thing this project taught me.
+
+Repo: https://github.com/vieveks/qwen3.5_r1
