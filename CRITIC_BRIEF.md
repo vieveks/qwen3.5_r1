@@ -1,145 +1,199 @@
-# Critic Brief: Iso-RLVR Stabilized XML Result
+# Critic Brief: Iso-RLVR
 
-Date: 2026-05-30
+Date: 2026-05-29
 
-This is the compact review packet for the current project state. It is written as a report skeleton: result first, then the interface work that makes the result trustworthy, then limitations and next work.
+## Executive Summary
 
-## Headline Result
+The current result is the Phase 6 narrow Iso-RLVR result on a stabilized packed XML verifier interface.
 
-On a stable packed XML verifier interface, proper TRL `GRPOTrainer` training with an isomorphic family reward improves heldout family accuracy over independent RLVR on the two working family types:
-
-```text
-missing_average
-rational_linear_equation
-```
-
-Best narrow result:
+The main comparison uses:
 
 ```text
-Independent family_accuracy: 0.5625
-Iso lambda_iso=1.00 family_accuracy: 0.6875
-Family_accuracy delta: +0.1250
-Accuracy delta: +0.0625
-Parse complete rate: 1.0000 in all narrow arms
-Sampled malformed completions: 0 in all narrow arms
-```
-
-The most important evidence is not a single run. It is the combination of:
-
-- reward-interface stabilization before RL
-- proper TRL GRPO integration
-- matched independent-vs-iso comparison
-- seed replication at `lambda_iso=0.50`
-- monotonic lambda trend at seed 23
-- zero parse regression across the narrow runs
-
-## Current Results Table
-
-This is the table to use for the current report. It replaces the older Phase 2/3 `grpo_lite` table.
-
-| Run | Accuracy | Family accuracy |
-| --- | ---: | ---: |
-| Base all-traces adapter | 0.7500 | 0.6250 |
-| Independent 30-step, seed 23 | 0.7188 | 0.5625 |
-| Iso `lambda_iso=0.25`, seed 23 | 0.7500 | 0.6250 |
-| Iso `lambda_iso=0.50`, seed 23 | 0.7500 | 0.6250 |
-| Iso `lambda_iso=1.00`, seed 23 | 0.7813 | 0.6875 |
-| Independent 30-step, seed 37 | 0.7188 | 0.5625 |
-| Iso `lambda_iso=0.50`, seed 37 | 0.7500 | 0.6250 |
-
-Note:
-
-```text
-phase6.md records Iso lambda_iso=1.00 accuracy as 0.7813.
-If an older note says 0.7500 for that row, treat it as stale.
-```
-
-## Main Phase 6 Table
-
-All runs below use the same base model, Phase 5 all-traces adapter initialization, train/eval split, trainer settings, and evaluation code. The only intentional variable in the sweep is the family reward scale.
-
-```text
-Base model: Qwen/Qwen2.5-Math-1.5B
+Model: Qwen/Qwen2.5-Math-1.5B
 Trainer: TRL GRPOTrainer
-Initialization: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
-Train dataset: outputs/phase5/packed_stage1_pair_xml_all_traces_train.jsonl
-Eval dataset: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+Initialization: Phase 5 all-traces LoRA adapter
+Families: missing_average, rational_linear_equation
+Prompt shape: two-variant packed XML
+Reward surface: strict XML parse plus correctness plus optional family component
+```
+
+Phase 6 result table:
+
+| Run | Accuracy | Family accuracy | Parse complete | Sampled malformed |
+| --- | ---: | ---: | ---: | ---: |
+| Base all-traces adapter | 0.7500 | 0.6250 | 1.0000 | 0 |
+| Independent 30-step, seed 23 | 0.7188 | 0.5625 | 1.0000 | 0 |
+| Iso `lambda_iso=0.25`, seed 23 | 0.7500 | 0.6250 | 1.0000 | 0 |
+| Iso `lambda_iso=0.50`, seed 23 | 0.7500 | 0.6250 | 1.0000 | 0 |
+| Iso `lambda_iso=1.00`, seed 23 | 0.7813 | 0.6875 | 1.0000 | 0 |
+| Independent 30-step, seed 37 | 0.7188 | 0.5625 | 1.0000 | 0 |
+| Iso `lambda_iso=0.50`, seed 37 | 0.7500 | 0.6250 | 1.0000 | 0 |
+
+The important result is the monotonic family-accuracy trend in the seed-23 lambda sweep:
+
+```text
+Independent: 0.5625
+lambda_iso=0.25: 0.6250
+lambda_iso=0.50: 0.6250
+lambda_iso=1.00: 0.6875
+```
+
+Best observed narrow result:
+
+```text
+lambda_iso=1.00
+accuracy delta over independent: +0.0625
+family_accuracy delta over independent: +0.1250
+parse_complete_rate delta: 0.0000
+```
+
+This is a clean, narrow result. It should not be presented as broad mathematical-reasoning generalization.
+
+## Research Question
+
+The baseline RLVR question is:
+
+```text
+Did the model produce the correct final answer for this packed prompt?
+```
+
+The Iso-RLVR question is:
+
+```text
+Did the model produce correct answers consistently across isomorphic variants from the same latent family?
+```
+
+The working hypothesis is that an isomorphic family reward should prefer policies that solve the shared latent structure rather than policies that get isolated variants right by brittle local patterns.
+
+## Current Result
+
+The clean Phase 6 result has three parts.
+
+First, `lambda_iso=0.50` replicated across two seeds:
+
+| Seed | Independent accuracy | Iso accuracy | Independent family accuracy | Iso family accuracy | Family delta |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 23 | 0.7188 | 0.7500 | 0.5625 | 0.6250 | +0.0625 |
+| 37 | 0.7188 | 0.7500 | 0.5625 | 0.6250 | +0.0625 |
+
+For seed 37, independent and iso had identical contrast-driver prompt groups. That matters because the result is not explained by the iso arm receiving better contrast prompts.
+
+Second, the seed-23 lambda sweep was monotonic in family accuracy:
+
+| Arm | Accuracy | Family accuracy | Family delta over independent |
+| --- | ---: | ---: | ---: |
+| Independent | 0.7188 | 0.5625 | 0.0000 |
+| Iso `lambda_iso=0.25` | 0.7500 | 0.6250 | +0.0625 |
+| Iso `lambda_iso=0.50` | 0.7500 | 0.6250 | +0.0625 |
+| Iso `lambda_iso=1.00` | 0.7813 | 0.6875 | +0.1250 |
+
+Third, all narrow Phase 6 runs preserved the verifier interface:
+
+```text
+parse_complete_rate: 1.0000
+answer_count_mismatch_rate: 0.0000
+suspicious_rate: 0.0000
+sampled malformed completions: 0
+```
+
+By-family breakdown for the seed-23 sweep:
+
+| Arm | `missing_average` acc. | `missing_average` family acc. | `rational_linear_equation` acc. | `rational_linear_equation` family acc. |
+| --- | ---: | ---: | ---: | ---: |
+| Independent | 0.9167 | 0.8333 | 0.6000 | 0.4000 |
+| Iso `lambda_iso=0.25` | 1.0000 | 1.0000 | 0.6000 | 0.4000 |
+| Iso `lambda_iso=0.50` | 1.0000 | 1.0000 | 0.6000 | 0.4000 |
+| Iso `lambda_iso=1.00` | 1.0000 | 1.0000 | 0.6500 | 0.5000 |
+
+Interpretation:
+
+```text
+missing_average benefits strongly from the family reward.
+rational_linear_equation improves only at lambda_iso=1.00.
+```
+
+## What Changed From Early Runs
+
+The early Phase 2/3 result used a local `grpo_lite` trainer, single-problem prompts, and a loose final-answer extractor. Those runs were useful historically, but Phase 4 and Phase 5 showed that the reward interface was not reliable enough for a strong claim.
+
+The current result is different:
+
+```text
+grpo_lite -> TRL GRPOTrainer
+single-problem prompt -> packed two-variant XML prompt
+loose answer extraction -> strict XML answer parser
+unstable reward interface -> Phase 5 SFT-stabilized XML contract
+```
+
+The old Phase 2/3 brief is preserved in `CRITIC_BRIEF_phase2.md`. It should be treated as historical context only.
+
+## Model And Runtime
+
+Primary model:
+
+```text
+Qwen/Qwen2.5-Math-1.5B
+```
+
+Policy initialization:
+
+```text
+outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
+```
+
+This adapter was trained in Phase 5 to emit deterministic traces followed by strict XML answers. It is not the GRPO-lite output. It is the clean RL initialization.
+
+Runtime stack:
+
+```text
+Environment: pytorch_5070ti
+trl: 0.17.0
+transformers: 5.0.0.dev0
+accelerate: 1.10.0
+datasets: 4.0.0
+peft: 0.17.0
+```
+
+Phase 6 training configuration:
+
+```text
+Trainer: TRL GRPOTrainer
 Steps: 30
 Num generations: 4
 Temperature: 0.7
 Max completion length: 256
 Learning rate: 1e-6
 Beta: 0.04
+LoRA adapter training
 ```
 
-| Arm | Accuracy | Family accuracy | Parse complete | Mismatch | Suspicious | Sampled malformed |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Independent | 0.7188 | 0.5625 | 1.0000 | 0.0000 | 0.0000 | 0 |
-| Iso 0.25 | 0.7500 | 0.6250 | 1.0000 | 0.0000 | 0.0000 | 0 |
-| Iso 0.50 | 0.7500 | 0.6250 | 1.0000 | 0.0000 | 0.0000 | 0 |
-| Iso 1.00 | 0.7813 | 0.6875 | 1.0000 | 0.0000 | 0.0000 | 0 |
+## Code Architecture
 
-Comparison against independent:
+Current files that matter:
 
-| Arm | Accuracy delta | Family accuracy delta | Parse delta |
-| --- | ---: | ---: | ---: |
-| Iso 0.25 | +0.0312 | +0.0625 | 0.0000 |
-| Iso 0.50 | +0.0312 | +0.0625 | 0.0000 |
-| Iso 1.00 | +0.0625 | +0.1250 | 0.0000 |
+| Area | File | Responsibility |
+| --- | --- | --- |
+| Packed XML parser | `src/iso_rlvr/rewards/packed_answer.py` | Extracts strict XML answer blocks and rejects malformed answer values. |
+| Packed reward | `src/iso_rlvr/rewards/packed_iso.py` | Implements `score_packed_completion`, format reward, penalties, correctness, and optional family component. |
+| Packed eval | `src/iso_rlvr/eval/run_packed_eval.py` | Runs deterministic packed heldout eval and by-family summaries. |
+| Rollout audit | `src/iso_rlvr/eval/run_packed_rollout_audit.py` | Samples completions before training and measures parse stability, reward variance, and contrast. |
+| Packed diagnostics | `src/iso_rlvr/eval/packed_diagnostics.py` | Tracks parse completeness, answer-count mismatch, suspicious cases, repeats, and malformed samples. |
+| SFT dataset builder | `src/iso_rlvr/data/build_format_sft_dataset.py` | Builds XML answer-only, trace-to-XML, all-traces, and think-bridge datasets. |
+| TRL GRPO trainer | `src/iso_rlvr/train/packed_grpo_trl.py` | Runs proper TRL `GRPOTrainer`, wraps the stateless packed reward function, logs reward records. |
+| GRPO-lite trainer | `src/iso_rlvr/train/packed_grpo_lite.py` | Historical smoke path only; not the current result path. |
 
-The family-accuracy trend is monotonic:
+Critical implementation point:
 
 ```text
-independent: 0.5625
-lambda_iso=0.25: 0.6250
-lambda_iso=0.50: 0.6250
-lambda_iso=1.00: 0.6875
+The TRL reward function is stateless. Dataset columns carry gold_answers, family_id,
+family_type, variant_ids, and num_variants directly into the reward function.
 ```
 
-This is stronger evidence than any single iso-vs-independent delta. It is the expected shape if the family reward is doing incremental work rather than injecting arbitrary reward noise. It is still a narrow result, not a broad generalization claim.
+## Dataset Design
 
-## Seed Replication
+The current Phase 6 result uses packed rows. Each prompt contains two related variants from the same family and expects two verifier-compatible XML answers.
 
-The first clean iso comparison at `lambda_iso=0.50` replicated across two seeds.
-
-| Seed | Independent accuracy | Iso accuracy | Independent family accuracy | Iso family accuracy | Family delta | Parse stable |
-| ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 23 | 0.7188 | 0.7500 | 0.5625 | 0.6250 | +0.0625 | yes |
-| 37 | 0.7188 | 0.7500 | 0.5625 | 0.6250 | +0.0625 | yes |
-
-For seed 37, independent and iso had identical contrast-driver prompt groups. This matters because it rules out the simple explanation that the iso arm improved only because it happened to receive easier or more useful contrast prompts.
-
-## By-Family Interpretation
-
-The narrow result is driven mostly by `missing_average`, with `rational_linear_equation` improving only at the highest lambda.
-
-| Arm | `missing_average` accuracy | `missing_average` family acc. | `rational_linear_equation` accuracy | `rational_linear_equation` family acc. |
-| --- | ---: | ---: | ---: | ---: |
-| Independent | 0.9167 | 0.8333 | 0.6000 | 0.4000 |
-| Iso 0.25 | 1.0000 | 1.0000 | 0.6000 | 0.4000 |
-| Iso 0.50 | 1.0000 | 1.0000 | 0.6000 | 0.4000 |
-| Iso 1.00 | 1.0000 | 1.0000 | 0.6500 | 0.5000 |
-
-Interpretation:
-
-```text
-missing_average benefits clearly from family-level reward.
-rational_linear_equation has a lower capability ceiling but improves at lambda_iso=1.00.
-```
-
-Do not claim that the result generalizes to all calibrated family types.
-
-## Why The Result Is Trustworthy
-
-Earlier phases showed that the project was not initially blocked by GRPO mechanics. It was blocked by the interface between model output and verifier.
-
-The original weak link was:
-
-```text
-model completion -> parser -> verifier -> reward
-```
-
-Phase 5 fixed this by moving to a strict packed XML answer contract:
+Output contract:
 
 ```xml
 <answers>
@@ -148,95 +202,55 @@ Phase 5 fixed this by moving to a strict packed XML answer contract:
 </answers>
 ```
 
-The final Phase 5 all-traces adapter passed the interface gate:
+Main Phase 6 train/eval data:
 
 ```text
-greedy parse_complete_rate: 1.0000
-sampled parse_complete_rate: 1.0000
-answer_count_mismatch_rate: 0.0000
-suspicious_rate: 0.0000
-malformed samples: 0
-reward_std: non-degenerate
+Train dataset: outputs/phase5/packed_stage1_pair_xml_all_traces_train.jsonl
+Eval dataset: outputs/phase5/packed_stage1_pair_xml_sft_heldout.jsonl
+Families used in the narrow result: missing_average, rational_linear_equation
 ```
 
-Then Phase 6 replaced the local `grpo_lite` scaffold with proper TRL:
+Each row carries:
 
 ```text
-trl: 0.17.0
-transformers: 5.0.0.dev0
-accelerate: 1.10.0
-datasets: 4.0.0
-peft: 0.17.0
+prompt
+family_id
+family_type
+variant_ids
+problems
+gold_answers
+num_variants
+metadata
+prompt_format
 ```
 
-The TRL smoke preserved the XML interface under real GRPO updates:
+The broader calibrated family types:
 
 ```text
-sampled parse_complete_rate: 1.0000
-post-update heldout parse_complete_rate: 1.0000
-answer_count_mismatch_rate: 0.0000
-suspicious_rate: 0.0000
-sampled malformed completions: 0
+chinese_remainder
+rational_system_target
 ```
 
-This is why the Phase 6 result is cleaner than the earlier Phase 2/3 evidence. The reward surface is now verifier-stable.
+are not part of the main Phase 6 claim. They are parse-stable under later bridge work but not yet RL-ready because sampled correctness and correctness-level prompt contrast remain too weak.
 
-## Current Code Architecture
+## Reward Design
 
-The current result is built on the packed XML RLVR path, not the old single-problem `grpo_lite` path.
-
-| Area | File | Responsibility |
-| --- | --- | --- |
-| Packed answer parser | `src/iso_rlvr/rewards/packed_answer.py` | Extracts strict XML answer blocks, normalizes numeric values, rejects malformed answer values. |
-| Packed reward | `src/iso_rlvr/rewards/packed_iso.py` | Scores packed completions with correctness, format, penalties, and optional family reward. |
-| Packed diagnostics | `src/iso_rlvr/eval/packed_diagnostics.py` | Tracks parse completeness, mismatch, suspicious patterns, repeated-answer diagnostics, and malformed cases. |
-| Packed eval | `src/iso_rlvr/eval/run_packed_eval.py` | Runs deterministic packed heldout evaluation and by-family summaries. |
-| Rollout audit | `src/iso_rlvr/eval/run_packed_rollout_audit.py` | Samples grouped completions before training and checks reward variance, contrast, and malformed modes. |
-| Format SFT builder | `src/iso_rlvr/data/build_format_sft_dataset.py` | Builds XML and trace-to-XML supervised bridge datasets. |
-| TRL trainer | `src/iso_rlvr/train/packed_grpo_trl.py` | Runs proper TRL `GRPOTrainer`, wraps the stateless packed reward function, logs per-prompt reward distributions. |
-| Historical trainer | `src/iso_rlvr/train/grpo_lite.py` | Early local scaffold; useful historically but not the current result path. |
-
-Current training stack:
-
-```text
-trl: 0.17.0
-transformers: 5.0.0.dev0
-accelerate: 1.10.0
-datasets: 4.0.0
-peft: 0.17.0
-```
-
-Current model path:
-
-```text
-Base model: Qwen/Qwen2.5-Math-1.5B
-Policy initialization: Phase 5 all-traces LoRA adapter
-Adapter: outputs/phase5/format_sft_qwen25_math_1_5b_xml_all_traces_1epoch/adapter_or_model
-```
-
-## Reward Contract
+The current reward is based on `score_packed_completion`.
 
 Independent reward:
 
 ```text
-correctness + format reward
+correctness + format reward - penalties
 family bonus disabled
 ```
 
 Iso reward:
 
 ```text
-correctness + format reward + family component
+correctness + format reward + family component - penalties
 ```
 
-The Phase 6 family component uses two weights:
-
-```text
-family_mean_weight
-all_family_correct_weight
-```
-
-The lambda settings correspond to:
+Family component weights:
 
 | Lambda | `family_mean_weight` | `all_family_correct_weight` |
 | ---: | ---: | ---: |
@@ -247,34 +261,46 @@ The lambda settings correspond to:
 Critical rule:
 
 ```text
-No correctness credit unless the packed XML answer interface is parse-complete.
+No correctness credit unless the XML answer interface is parse-complete.
 ```
 
-This prevents malformed completions from receiving accidental task credit.
-
-## Broad-Family Status
-
-The broader calibrated family types are not part of the main Phase 6 claim:
+Interface metrics tracked:
 
 ```text
-chinese_remainder
-rational_system_target
+parse_complete_rate
+answer_count_mismatch_rate
+suspicious_rate
+sampled malformed completions
+reward mean/std
+contrast prompt count
+by-family-type accuracy and family accuracy
 ```
 
-They became mostly parse-stable under later bridge experiments, but they are still weak RL targets:
+## What A Critic Should Challenge
+
+The main limitations are:
+
+1. The main heldout set is small.
+2. The claim covers only two procedural family types.
+3. The best `lambda_iso=1.00` result has not yet been replicated across multiple seeds.
+4. The two-seed replication is for `lambda_iso=0.50`, not for every lambda.
+5. Training runs are short: 30 GRPO steps.
+6. The result is local to `Qwen/Qwen2.5-Math-1.5B` plus LoRA.
+7. The reward checks final answers only, not reasoning validity.
+8. The XML interface is engineered and may not transfer unchanged to other answer contracts.
+9. Broad calibrated families are not RL-ready under the current bridge.
+10. No bootstrap confidence interval over families has been reported.
+11. No final blind benchmark untouched by iteration has been run.
+
+The correct claim is narrow:
 
 ```text
-chinese_remainder sampled accuracy: 0.0000
-chinese_remainder correctness contrast: 0 prompts
-rational_system_target sampled accuracy: 0.0208
-rational_system_target correctness contrast: 1 prompt
+Iso-RLVR improves family accuracy over independent RLVR on the stabilized two-family packed XML interface.
 ```
-
-These are capability and rollout-contrast blockers, not evidence against the narrow Iso-RLVR result.
 
 ## Phase 7 Status
 
-Phase 7 tested a future-work direction:
+Phase 7 tested a future-work architecture:
 
 ```xml
 <think>
@@ -288,10 +314,10 @@ free reasoning
 
 The verifier scores only `<answers>` and ignores `<think>`.
 
-What Phase 7 established:
+Phase 7 established:
 
 ```text
-Parser/reward isolation for <think> is working.
+Parser/reward isolation for <think> works.
 Minimal-think SFT teaches the tag surface but destroys too much math behavior.
 Hybrid-think SFT preserves working-family capability better.
 Hard-family correctness contrast remains too sparse for meaningful GRPO.
@@ -299,70 +325,14 @@ Working-family deterministic eval remains stable after a tiny GRPO smoke.
 Sampled working-family rollouts still fail the parse gate.
 ```
 
-Known blockers:
-
-| Blocker | Status | Evidence |
-| --- | --- | --- |
-| Empty or missing-think completions | Mostly fixed by response prefix | `think_block_rate: 1.0000` under `<think>\n` prefix |
-| Missing final `<answers>` block after `</think>` | Still open | prefixed `parse_complete_rate: 0.8438` |
-| Hard-family correctness contrast | Still too sparse | CRT has one contrast prompt; rational-system has zero sampled accuracy |
-
-Phase 7 is closed as a deferred extension. It should not delay the report.
-
-## What The Report Can Claim
-
-Supported claim:
+Known blocker:
 
 ```text
-On a stable two-family packed XML verifier interface, Iso-RLVR improves family accuracy over independent RLVR under proper TRL GRPO, with no parse regression.
+Response prefixing fixes the opening <think> tag, but sampled completions often stop after </think>
+and fail to emit the required final <answers> block.
 ```
 
-More specific supported wording:
-
-```text
-At lambda_iso=0.50, the family-accuracy improvement replicated across two seeds.
-At seed 23, increasing lambda_iso from 0.25 to 1.00 produced a monotonic family-accuracy trend.
-The best observed narrow run, lambda_iso=1.00, improved family_accuracy by +0.1250 over independent.
-```
-
-Do not claim:
-
-- that Iso-RLVR generally improves mathematical reasoning across benchmarks
-- that the effect has been proven statistically
-- that the result generalizes to `chinese_remainder` or `rational_system_target`
-- that `<think> + <answers>` GRPO has been solved
-- that larger models will necessarily solve the deferred families
-
-## Limitations A Critic Should Challenge
-
-The main limitations are:
-
-1. The main heldout set is small.
-2. The main claim covers only two procedural family types.
-3. The `lambda_iso=1.00` best result has not yet been replicated across multiple seeds.
-4. The two-seed replication is for `lambda_iso=0.50`, not for every lambda.
-5. The broad calibrated family types are not RL-ready under the current bridge.
-6. The result is local to `Qwen/Qwen2.5-Math-1.5B` plus LoRA.
-7. The reward checks final answers only, not reasoning validity.
-8. The XML interface is engineered; other answer contracts may behave differently.
-9. No bootstrap confidence interval over families has been reported yet.
-10. There is no final blind benchmark untouched by iteration.
-11. Phase 7 shows that adding a reasoning channel introduces new format-control problems.
-
-These caveats should stay in the final write-up.
-
-## Suggested Report Structure
-
-1. Lead with the Phase 6 result table and monotonic lambda trend.
-2. State the narrow claim and scope boundary immediately.
-3. Explain the reward-interface failure that made earlier results unreliable.
-4. Describe the Phase 5 XML stabilization and SFT bridge.
-5. Describe the proper TRL GRPO integration.
-6. Present the replicated `lambda_iso=0.50` comparison.
-7. Present the `lambda_iso` sweep and by-family breakdown.
-8. Discuss broad-family failures as scope boundaries, not contradictions.
-9. Summarize Phase 7 as future work on free reasoning channels.
-10. End with limitations and next experiments.
+Phase 7 is closed as a deferred extension. It should be treated as future work, not as part of the main claim.
 
 ## Reproduction Commands
 
@@ -373,13 +343,13 @@ conda run -n pytorch_5070ti python -m pip install -e .
 conda run -n pytorch_5070ti pytest tests
 ```
 
-Run the proper TRL trainer smoke:
+Run the TRL smoke:
 
 ```bash
 conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config configs/packed_grpo_trl_all_traces_smoke.yaml
 ```
 
-Run the seed 23 independent-vs-iso matrix:
+Run the seed-23 Phase 6 matrix:
 
 ```bash
 conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config configs/packed_grpo_trl_all_traces_independent_30step.yaml
@@ -388,37 +358,20 @@ conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config co
 conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config configs/packed_grpo_trl_all_traces_iso_lam_1_00_30step.yaml
 ```
 
-Run the seed 37 confirmation pair:
+Run the seed-37 confirmation pair:
 
 ```bash
 conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config configs/packed_grpo_trl_all_traces_independent_30step_seed_37.yaml
 conda run -n pytorch_5070ti python -m iso_rlvr.train.packed_grpo_trl --config configs/packed_grpo_trl_all_traces_iso_lam_0_50_30step_seed_37.yaml
 ```
 
-The configs run final packed heldout eval after saving adapters. For standalone eval, use the matching `packed_eval_*` configs documented in `phase6.md`.
-
-## Next Work
-
-For the main report:
-
-- write the report around the Phase 6 narrow result
-- include Phase 5 as methods and reliability evidence
-- include Phase 7 only as future work
-
-For future experiments:
-
-- replicate `lambda_iso=1.00` across more seeds
-- add family-level bootstrap intervals
-- build a larger heldout set for the two working families
-- test a final blind procedural split
-- revisit `<think> + <answers>` only after enforcing the `</think>\n<answers>` transition
-- test harder family types on larger models after the two-tag interface is stable
+The trainer configs save adapters and run final heldout evaluation after training. Detailed run logs and interpretation are in `phase6.md`.
 
 ## Current Decision
 
-Stop running Phase 7. Move to the report.
+Stop Phase 7 and move to the report.
 
-The current project result is:
+Report the Phase 6 result:
 
 ```text
 Phase 5 made the verifier interface reliable.
