@@ -249,9 +249,7 @@ These limitations are not footnotes. They define the claim.
 
 ## What I Would Do Next
 
-The immediate next step is not more Phase 7 tinkering. It is writing up the Phase 6 result cleanly.
-
-After that, the next experiments are straightforward:
+The next experiments are straightforward:
 
 - replicate `lambda_iso=1.00` across more seeds
 - add bootstrap confidence intervals over families
@@ -272,4 +270,4 @@ If the parser is unreliable, the reward is not what you think it is. And if the 
 
 That was the most useful thing this project taught me.
 
-Repo: https://github.com/vieveks/qwen3.5_r1
+Full logs and reproduction commands: https://github.com/vieveks/qwen3.5_r1
