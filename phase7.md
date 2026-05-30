@@ -948,6 +948,125 @@ Candidate fixes before the think-GRPO comparison:
 - Run a no-training working-family audit with the prefix before any more GRPO.
 - If prefixing preserves accuracy and parse completeness, rerun the guarded working-family smoke.
 
+### Experiment 7.7: Response-Prefix Working-Family Audit
+
+Goal:
+
+```text
+Test whether forcing sampled completions to begin with <think> fixes the empty-completion tail.
+```
+
+Rationale:
+
+The lower-temperature audits showed that the sampled interface problem was not primarily caused by high temperature. The next narrow generation-control fix was to prefix assistant generation with:
+
+```xml
+<think>
+```
+
+The reward parser must see the same prefix that generation used. Otherwise TRL receives a completion fragment that starts after the prefix, while the verifier expects the full two-tag completion.
+
+Implementation:
+
+```text
+Trainer: src/iso_rlvr/train/packed_grpo_trl.py
+Config: configs/packed_rollout_audit_phase7_hybrid_think_working_prefix_temp_0_7.yaml
+Response prefix: "<think>\n"
+Family filter: missing_average, rational_linear_equation
+Samples per prompt: 4
+Temperature: 0.7
+Max new tokens: 512
+```
+
+Code behavior:
+
+- TRL train rows append `response_prefix` to the prompt before generation.
+- The reward adapter prepends the same `response_prefix` before parsing and scoring completions.
+- Reward records now preserve both the raw `model_response` and verifier-facing `parsed_response`.
+- Reward records include `response_prefix`, `has_think_block`, and `nontrivial_think_block`.
+
+Targeted test result:
+
+```text
+tests/test_packed_grpo_trl.py: passed
+tests/test_packed_rollout_audit.py: passed
+combined targeted suite: 17 passed
+```
+
+Audit result:
+
+```text
+samples: 64
+accuracy: 0.5547
+family_accuracy: 0.4219
+parse_complete_rate: 0.8438
+answer_count_mismatch_rate: 0.1562
+suspicious_rate: 0.1875
+think_block_rate: 1.0000
+nontrivial_think_block_rate: 1.0000
+reward_std: 0.4636
+contrast_prompt_count: 5
+passes_audit_gate: false
+```
+
+By family type:
+
+| Family type | Accuracy | Family accuracy | Parse complete | Mismatch | Think block |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `missing_average` | 0.5417 | 0.3889 | 0.8611 | 0.1389 | 1.0000 |
+| `rational_linear_equation` | 0.5714 | 0.4643 | 0.8214 | 0.1786 | 1.0000 |
+
+Observed failure-mode change:
+
+```text
+The prefix fixed missing think blocks.
+It did not fix missing final answer blocks.
+```
+
+The malformed samples were no longer mostly empty completions. Instead, many completions produced a complete-looking `<think>...</think>` trace and then stopped before emitting `<answers>...</answers>`.
+
+Representative malformed pattern:
+
+```xml
+<think>
+Problem 1 isolate...
+Problem 1 divide...
+Problem 2 isolate...
+Problem 2 divide...
+</think>
+```
+
+Other malformed samples emitted answer tags outside an enclosing `<answers>` block. The strict parser correctly rejected those outputs because the verifier contract requires the final answer block.
+
+Conclusion:
+
+Response prefixing is useful but insufficient. It converts the sampled interface problem from:
+
+```text
+empty completion or missing <think>
+```
+
+to:
+
+```text
+missing transition from </think> to <answers>
+```
+
+Do not run the independent-versus-iso think-GRPO comparison from this setup. The sampled parse-complete rate remains below the Phase 5/6 standard:
+
+```text
+parse_complete_rate: 0.8438
+answer_count_mismatch_rate: 0.1562
+```
+
+The next targeted fix should address the reasoning-to-answer transition, not the opening tag. Candidate options:
+
+- add a small transition-focused SFT replay set that preserves working-family traces and always closes with `<answers>`
+- use a stronger decode scaffold or staged decode that generates reasoning first, then forces the answer-block opening
+- add a format-only repair pass for sampled rollouts before attempting GRPO, if the repair pass can be kept outside the reward target
+
+This is still an extension problem. The Phase 6 core result remains complete without it.
+
 ## Scope Boundary
 
 Phase 7 is not needed to claim the narrow Phase 6 result.
@@ -974,13 +1093,15 @@ The first minimal-think bridge was useful but failed as a GRPO starting point. I
 
 The hybrid-think bridge is the current best Phase 7 adapter. It recovers most of the broad deterministic accuracy that minimal-think destroyed and creates one sampled hard-family contrast prompt, but the hard-family signal remains too sparse for a meaningful hard-family GRPO run.
 
-The working-family GRPO smoke shows that the saved adapter stays stable under deterministic eval after updates, but sampled rollouts have too many empty completions. Lowering temperature to `0.5` and `0.3` did not fix the issue. Do not proceed to the independent-versus-iso think-GRPO comparison until sampled parse completeness is restored.
+The working-family GRPO smoke shows that the saved adapter stays stable under deterministic eval after updates, but sampled rollouts have too many malformed completions. Lowering temperature to `0.5` and `0.3` did not fix the issue. Response prefixing with `<think>\n` fixed the missing-think/empty-start problem, but it exposed a second failure mode: sampled completions often stop after `</think>` and never emit the required final `<answers>` block.
+
+Do not proceed to the independent-versus-iso think-GRPO comparison until sampled parse completeness is restored.
 
 Reasonable next checks are:
 
-- add and test TRL-compatible response-prefix generation for `<think>\n`
-- rerun the working-family sampled audit with the prefix
-- rerun the working-family smoke only if prefixed sampling restores parse completeness
+- add a transition-focused bridge or decode scaffold so completions reliably move from `</think>` to `<answers>`
+- rerun the working-family sampled audit only after the transition fix
+- rerun the working-family smoke only if sampled parse completeness returns to the Phase 5/6 gate
 - improve answer-tag hygiene for rational-system outputs
 - increase hard-family SFT data before another GRPO attempt
 
@@ -989,7 +1110,8 @@ The key lesson:
 ```text
 Minimal think SFT teaches the tag contract, but by itself it is too answer-only.
 Hybrid think SFT preserves more reasoning behavior, but hard-family correctness contrast is still sparse.
-Think-GRPO is close, but sampled rational-linear empty completions must be fixed before comparison runs.
+Response prefixing fixes the opening tag but not the reasoning-to-answer transition.
+Think-GRPO is close, but sampled completions must reliably reach <answers> before comparison runs.
 ```
 
 The Phase 7 thesis:

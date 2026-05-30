@@ -1,4 +1,5 @@
 from iso_rlvr.train.packed_grpo_trl import (
+    add_response_prefix_to_prompts,
     filter_rows_by_family_type,
     make_packed_trl_reward_func,
     packed_trl_reward_records,
@@ -61,6 +62,28 @@ def test_packed_trl_reward_records_include_think_metrics():
 
     assert records[0]["has_think_block"]
     assert records[0]["nontrivial_think_block"]
+
+
+def test_packed_trl_reward_records_parse_with_response_prefix():
+    _rewards, records = packed_trl_reward_records(
+        prompts=["prompt<think>\n"],
+        completions=[
+            "Problem 1 trace\n</think>\n"
+            "<answers>\n<answer_1>2</answer_1>\n<answer_2>3</answer_2>\n</answers>"
+        ],
+        gold_answers=[["2", "3"]],
+        family_id=["fam_1"],
+        family_type=["toy"],
+        variant_ids=[["a", "b"]],
+        num_variants=[2],
+        config=packed_trl_reward_config({"family_bonus_enabled": False}),
+        response_prefix="<think>\n",
+    )
+
+    assert records[0]["parse_complete"]
+    assert records[0]["has_think_block"]
+    assert records[0]["response_prefix"] == "<think>\n"
+    assert records[0]["parsed_response"].startswith("<think>\n")
 
 
 def test_packed_trl_rewards_accept_chat_style_completions():
@@ -135,3 +158,12 @@ def test_filter_rows_by_family_type_rejects_empty_result():
         assert "removed all rows" in str(exc)
     else:
         raise AssertionError("Expected empty family filter result to raise ValueError")
+
+
+def test_add_response_prefix_to_prompts_appends_prefix_without_mutating_rows():
+    rows = [{"prompt": "Problem 1: ..."}]
+
+    prefixed = add_response_prefix_to_prompts(rows, "<think>\n")
+
+    assert prefixed == [{"prompt": "Problem 1: ...<think>\n"}]
+    assert rows == [{"prompt": "Problem 1: ..."}]

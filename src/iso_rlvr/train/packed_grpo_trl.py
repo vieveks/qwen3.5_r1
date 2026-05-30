@@ -69,6 +69,7 @@ def make_packed_trl_reward_func(
     samples_per_prompt = int(cfg.get("num_generations", cfg.get("samples_per_prompt", 1)))
     reward_std_threshold = float(cfg.get("reward_std_threshold", 0.05))
     parse_complete_threshold = float(cfg.get("parse_complete_threshold", 0.95))
+    response_prefix = str(cfg.get("response_prefix", ""))
 
     def reward_func(
         prompts: Sequence[str],
@@ -92,6 +93,7 @@ def make_packed_trl_reward_func(
             tokenizer=tokenizer,
             completion_ids=completion_ids,
             config=reward_cfg,
+            response_prefix=response_prefix,
             extra_columns=kwargs,
         )
         if log_path is not None:
@@ -151,6 +153,7 @@ def packed_trl_reward_records(
     tokenizer: Any | None = None,
     completion_ids: Sequence[Sequence[int]] | None = None,
     config: PackedRewardConfig | None = None,
+    response_prefix: str = "",
     extra_columns: dict[str, Any] | None = None,
 ) -> tuple[list[float], list[dict[str, Any]]]:
     _require_matching_lengths(
@@ -171,9 +174,10 @@ def packed_trl_reward_records(
     rewards = []
     for idx, completion in enumerate(completions):
         text = _completion_to_text(completion)
-        think_diagnostics = think_block_diagnostics(text)
+        parsed_text = response_prefix + text
+        think_diagnostics = think_block_diagnostics(parsed_text)
         scored = score_packed_completion(
-            text,
+            parsed_text,
             gold_answers[idx],
             response_tokens=response_tokens[idx],
             config=config,
@@ -211,9 +215,11 @@ def packed_trl_reward_records(
             "parse_complete": scored.parse.complete,
             "parse_mode": scored.parse.mode,
             "parsed_answers": scored.parse.answers,
+            "parsed_response": parsed_text,
             "problems": _column_value(extra_columns, "problems", idx, []),
             "prompt": prompts[idx],
             "prompt_format": _column_value(extra_columns, "prompt_format", idx, "xml"),
+            "response_prefix": response_prefix,
             "response_tokens": response_tokens[idx],
             "reward": scored.reward,
             "sample_idx": idx,
@@ -296,6 +302,21 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, sort_keys=True)
 
 
+def add_response_prefix_to_prompts(
+    rows: list[dict[str, Any]],
+    response_prefix: str,
+) -> list[dict[str, Any]]:
+    if not response_prefix:
+        return rows
+    return [
+        {
+            **row,
+            "prompt": str(row["prompt"]) + response_prefix,
+        }
+        for row in rows
+    ]
+
+
 def train(config_path: Path) -> None:
     cfg = load_yaml(config_path)
     output_dir = Path(cfg["output_dir"])
@@ -316,6 +337,10 @@ def train(config_path: Path) -> None:
     )
     if cfg.get("max_train_examples"):
         train_rows = train_rows[: int(cfg["max_train_examples"])]
+    train_rows = add_response_prefix_to_prompts(
+        train_rows,
+        response_prefix=str(cfg.get("response_prefix", "")),
+    )
     eval_rows = read_jsonl(cfg["eval_dataset"])
     eval_rows = filter_rows_by_family_type(
         eval_rows,
