@@ -1,6 +1,6 @@
 # Phase 7: Free Reasoning With Structured Final Answers
 
-Status: active implementation log and working spec
+Status: closed as preliminary extension; full comparison deferred
 
 Date: 2026-05-29
 
@@ -1067,6 +1067,46 @@ The next targeted fix should address the reasoning-to-answer transition, not the
 
 This is still an extension problem. The Phase 6 core result remains complete without it.
 
+## Phase 7 Closing Status
+
+Phase 7 should stop here for now.
+
+The useful result is diagnostic, not a completed think-GRPO comparison. The experiments established that a `<think> + <answers>` contract can be parsed and rewarded safely, and that hybrid-think SFT preserves much more capability than minimal-think SFT. But sampled generation has not cleared the interface gate needed for a clean independent-versus-iso comparison.
+
+What Phase 7 established:
+
+```text
+Parser/reward isolation for <think> is working.
+Minimal-think SFT teaches the tag surface but destroys too much math behavior.
+Hybrid-think SFT preserves working-family capability better.
+Hard-family correctness contrast remains too sparse for meaningful GRPO.
+Working-family deterministic eval remains stable after a tiny GRPO smoke.
+Sampled working-family rollouts still fail the parse gate.
+```
+
+Known blocker sequence:
+
+| Blocker | Status | Evidence |
+| --- | --- | --- |
+| Empty or missing-think completions | Mostly fixed by response prefix | `think_block_rate: 1.0000` under `<think>\n` prefix |
+| Missing final `<answers>` block after `</think>` | Still open | prefixed `parse_complete_rate: 0.8438` |
+| Hard-family correctness contrast | Still too sparse | CRT has one contrast prompt; rational-system has zero sampled accuracy |
+
+Current diagnosis:
+
+```text
+The model can start the reasoning channel and often complete a plausible trace.
+It has not reliably learned that </think> must be followed by <answers>.
+```
+
+This is likely a transition-contract issue in the SFT/generation setup, not a parser problem. The next fix is known but should be deferred:
+
+- make the `</think>\n<answers>` transition completely consistent in SFT targets
+- or add a stronger decode scaffold that forces the answer block after reasoning
+- or use staged decoding: free reasoning first, then forced answer-block generation
+
+Do not spend more Phase 7 time on this before writing the report. The Phase 6 result is already clean, replicated, and sufficient as the main result. Phase 7 should be treated as future work.
+
 ## Scope Boundary
 
 Phase 7 is not needed to claim the narrow Phase 6 result.
@@ -1085,7 +1125,7 @@ Can a free reasoning channel make harder calibrated family types useful RL targe
 
 Do not mix these claims.
 
-## Current Recommendation
+## Final Recommendation
 
 Finish and preserve the Phase 6 narrow result as the main result.
 
@@ -1097,13 +1137,14 @@ The working-family GRPO smoke shows that the saved adapter stays stable under de
 
 Do not proceed to the independent-versus-iso think-GRPO comparison until sampled parse completeness is restored.
 
-Reasonable next checks are:
+Deferred future checks are:
 
 - add a transition-focused bridge or decode scaffold so completions reliably move from `</think>` to `<answers>`
 - rerun the working-family sampled audit only after the transition fix
 - rerun the working-family smoke only if sampled parse completeness returns to the Phase 5/6 gate
 - improve answer-tag hygiene for rational-system outputs
 - increase hard-family SFT data before another GRPO attempt
+- test hard families on larger models once the two-tag transition is stable
 
 The key lesson:
 
