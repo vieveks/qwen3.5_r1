@@ -1,0 +1,9 @@
+model_name: Qwen/Qwen2.5-Math-1.5B
+adapter_path: outputs/phase6/packed_grpo_trl_all_traces_iso_lam_0_50_30step_seed_37/adapter_or_model
+dataset_path: outputs/phase8/packed_phase8_eval_pair_xml.jsonl
+output_path: outputs/phase8/packed_eval_phase8_iso_lam_0_50_seed37.jsonl
+max_new_tokens: 256
+temperature: 0.0
+top_p: 1.0
+device: auto
+resume: true

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import random as _random
 from typing import Any, Sequence
 
 from datasets import Dataset
@@ -70,6 +71,11 @@ def make_packed_trl_reward_func(
     reward_std_threshold = float(cfg.get("reward_std_threshold", 0.05))
     parse_complete_threshold = float(cfg.get("parse_complete_threshold", 0.95))
     response_prefix = str(cfg.get("response_prefix", ""))
+    reward_mode = str(cfg.get("reward_mode", "verifier"))
+    if reward_mode not in {"verifier", "random"}:
+        raise ValueError(f"Unsupported reward_mode: {reward_mode!r}; expected verifier or random.")
+    random_reward_p = float(cfg.get("random_reward_p", 0.5))
+    random_rng = _random.Random(int(cfg.get("reward_mode_seed", cfg.get("seed", 0))))
 
     def reward_func(
         prompts: Sequence[str],
@@ -96,6 +102,12 @@ def make_packed_trl_reward_func(
             response_prefix=response_prefix,
             extra_columns=kwargs,
         )
+        if reward_mode == "random":
+            # Control arm: training signal is pure noise, but verifier records are
+            # still computed and logged so interface drift stays observable.
+            rewards = [1.0 if random_rng.random() < random_reward_p else 0.0 for _ in rewards]
+            for record, training_reward in zip(records, rewards):
+                record["training_reward"] = training_reward
         if log_path is not None:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with log_path.open("a", encoding="utf-8") as handle:
@@ -115,7 +127,9 @@ def make_packed_trl_reward_func(
                 handle.write("\n")
         return rewards
 
-    reward_func.__name__ = "packed_xml_reward"
+    reward_func.__name__ = (
+        "packed_xml_reward" if reward_mode == "verifier" else "packed_xml_reward_random"
+    )
     return reward_func
 
 

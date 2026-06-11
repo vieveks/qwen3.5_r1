@@ -104,6 +104,18 @@ def pack_family(rows: list[dict[str, Any]], prompt_format: str = "answer_lines")
     }
 
 
+def explode_family(
+    rows: list[dict[str, Any]], prompt_format: str = "answer_lines"
+) -> list[dict[str, Any]]:
+    ordered = sorted(rows, key=variant_sort_key)
+    exploded = []
+    for row in ordered:
+        packed = pack_family([row], prompt_format=prompt_format)
+        packed["row_id"] = f"{packed['family_id']}::{packed['variant_ids'][0]}"
+        exploded.append(packed)
+    return exploded
+
+
 def pack_dataset(
     rows: list[dict[str, Any]],
     include_family_types: set[str] | None = None,
@@ -113,6 +125,7 @@ def pack_dataset(
     shuffle: bool = False,
     seed: int = 0,
     prompt_format: str = "answer_lines",
+    explode_variants: bool = False,
 ) -> list[dict[str, Any]]:
     families = []
     for family_id, family_rows in group_by_family(rows).items():
@@ -131,6 +144,12 @@ def pack_dataset(
     if max_families is not None:
         families = families[:max_families]
 
+    if explode_variants:
+        return [
+            row
+            for _, family_rows in families
+            for row in explode_family(family_rows, prompt_format=prompt_format)
+        ]
     return [pack_family(family_rows, prompt_format=prompt_format) for _, family_rows in families]
 
 
@@ -144,6 +163,7 @@ def build_packed_dataset(
     shuffle: bool = False,
     seed: int = 0,
     prompt_format: str = "answer_lines",
+    explode_variants: bool = False,
 ) -> None:
     packed = pack_dataset(
         read_jsonl(input_path),
@@ -154,6 +174,7 @@ def build_packed_dataset(
         shuffle=shuffle,
         seed=seed,
         prompt_format=prompt_format,
+        explode_variants=explode_variants,
     )
     write_jsonl(out, packed)
 
@@ -178,6 +199,11 @@ def main() -> None:
         default="answer_lines",
         help="Packed answer format to request in the generated prompt.",
     )
+    parser.add_argument(
+        "--explode-variants",
+        action="store_true",
+        help="Emit one single-variant row per variant instead of one packed row per family.",
+    )
     args = parser.parse_args()
 
     build_packed_dataset(
@@ -190,6 +216,7 @@ def main() -> None:
         shuffle=args.shuffle,
         seed=args.seed,
         prompt_format=args.prompt_format,
+        explode_variants=args.explode_variants,
     )
 
 

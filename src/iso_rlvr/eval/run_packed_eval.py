@@ -137,7 +137,8 @@ def run_packed_eval(config_path: Path) -> None:
     output_path = Path(cfg["output_path"])
     resume = bool(cfg.get("resume", False))
     outputs = read_jsonl(output_path) if resume and output_path.exists() else []
-    completed = {row["family_id"] for row in outputs}
+    # Exploded single-variant rows share family_id, so resume must key on row_id when present.
+    completed = {row.get("row_id", row["family_id"]) for row in outputs}
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     model, tokenizer, _device = load_causal_lm(cfg["model_name"], cfg.get("device", "auto"))
@@ -148,7 +149,8 @@ def run_packed_eval(config_path: Path) -> None:
     log_mode = "a" if resume and output_path.exists() else "w"
     with output_path.open(log_mode, encoding="utf-8") as output_handle:
         for row in tqdm(rows, desc="packed-eval"):
-            if row["family_id"] in completed:
+            row_key = row.get("row_id", row["family_id"])
+            if row_key in completed:
                 continue
             response_prefix = str(cfg.get("response_prefix", ""))
             prompt = build_generation_prompt(tokenizer, row["prompt"], cfg)
@@ -197,7 +199,7 @@ def run_packed_eval(config_path: Path) -> None:
                 },
             }
             outputs.append(result)
-            completed.add(row["family_id"])
+            completed.add(row_key)
             output_handle.write(json.dumps(result, sort_keys=True) + "\n")
             output_handle.flush()
 

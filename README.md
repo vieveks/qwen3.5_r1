@@ -44,6 +44,8 @@ Progress log:
 - `phase1.md`: full Phase 1 run log, dataset calibration, field scan, and conclusions
 - `phase2.md`: first controlled training start, reward-mode configs, and smoke results
 - `phase3.md`: measurement-hardening log for overlap audit, family-type breakdowns, and full held-out eval
+- `phase8.md`: statistical power and confound controls — the Phase 6 result did not survive a 452-family heldout with paired bootstrap CIs
+- `phase9.md`: planned redesign — pinned TRL 1.x stack, Qwen3-1.7B instruct primary with Llama-3.2-3B control, difficulty-filtered training at real scale, gated so the iso hypothesis is only re-tested after independent RLVR demonstrably moves at all
 - `CRITIC_BRIEF.md`: critic-facing summary of the current evidence, code architecture, datasets, limitations, and next experiments
 - `PLAN.md`: experiment roadmap
 
@@ -131,6 +133,43 @@ python -m iso_rlvr.data.build_dataset --out data/iso_math_calibrated.jsonl --fam
 ## Next Steps
 
 Current progress and conclusions are tracked in `phase1.md`.
+
+## Ubuntu Migration (Phase 9 Environment)
+
+This project is moving from Windows to Ubuntu for Phase 9. The main reasons: native vLLM support for fast GRPO rollouts, first-class FlashAttention/Triton kernels, and none of the Windows-specific tooling friction hit during Phase 8.
+
+### GPU driver first
+
+PyTorch will not see the GPU until the NVIDIA driver is installed. The RTX 5070 Ti is a Blackwell card (sm_120) and needs a recent driver branch (R570 or newer, which provides the CUDA 12.8+ runtime):
+
+```bash
+sudo ubuntu-drivers list
+sudo ubuntu-drivers install        # installs the recommended driver
+sudo reboot
+nvidia-smi                         # must show the 5070 Ti before continuing
+```
+
+If `ubuntu-drivers` offers nothing 570+, add the graphics-drivers PPA (`sudo add-apt-repository ppa:graphics-drivers/ppa`) and install the newest `nvidia-driver-*` it lists. Do not install the CUDA toolkit separately for this project; the pip PyTorch wheels bundle their own CUDA runtime and only need the driver.
+
+### Python environment
+
+```bash
+conda create -n iso_rlvr python=3.12 -y
+conda activate iso_rlvr
+pip install torch --index-url https://download.pytorch.org/whl/cu128
+pip install -e .
+python -m pytest tests
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+The cu128 index is required: older default wheels do not include sm_120 kernels and will fail on Blackwell. Phase 9 Stage 0 then pins the RL stack (`trl==1.5.1` plus compatible stable `transformers`/`peft`) — see `phase9.md`; do not install dev builds, version drift broke the Phase 8 random-reward arm.
+
+### What does not come with the clone
+
+`outputs/` and `data/*.jsonl` are gitignored. After cloning:
+
+- Datasets are regenerable exactly: every build command and seed is documented in the phase logs (Phase 8 eval set: seed 101 plus `filter_overlap` against the seed-29 generation, see `phase8.md`).
+- The Phase 5/6 adapters and Phase 8 eval outputs exist only on the Windows machine. Phase 9 does not need them (it parks the Qwen2.5-Math line and trains fresh models); copy `outputs/` across manually only if you want the historical artifacts.
 
 ### 1. Set Up The Environment
 

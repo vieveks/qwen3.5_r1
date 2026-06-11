@@ -45,6 +45,46 @@ def test_packed_trl_reward_func_accepts_dataset_columns_as_kwargs():
     assert rewards[1] < 0.55
 
 
+def test_packed_trl_reward_func_random_mode_returns_seeded_noise():
+    columns = {
+        "prompts": ["prompt 1", "prompt 2"],
+        "completions": [
+            "<answers>\n<answer_1>2</answer_1>\n<answer_2>3</answer_2>\n</answers>",
+            "<answers>\n<answer_1>2</answer_1>\n<answer_2>4</answer_2>\n</answers>",
+        ],
+        "gold_answers": [["2", "3"], ["2", "3"]],
+        "family_id": ["fam_1", "fam_2"],
+        "family_type": ["toy", "toy"],
+        "variant_ids": [["a", "b"], ["c", "d"]],
+        "num_variants": [2, 2],
+    }
+
+    first_func = make_packed_trl_reward_func(
+        {"family_bonus_enabled": False, "reward_mode": "random", "reward_mode_seed": 11}
+    )
+    second_func = make_packed_trl_reward_func(
+        {"family_bonus_enabled": False, "reward_mode": "random", "reward_mode_seed": 11}
+    )
+
+    first = first_func(**columns)
+    second = second_func(**columns)
+
+    assert first == second
+    assert all(reward in (0.0, 1.0) for reward in first)
+    assert first_func.__name__ == "packed_xml_reward_random"
+    # Verifier rewards for these completions are 1.05 and 0.55; random mode must not return them.
+    assert first != [1.05, 0.55]
+
+
+def test_packed_trl_reward_func_rejects_unknown_reward_mode():
+    try:
+        make_packed_trl_reward_func({"reward_mode": "majority"})
+    except ValueError as exc:
+        assert "Unsupported reward_mode" in str(exc)
+    else:
+        raise AssertionError("Expected unknown reward_mode to raise ValueError")
+
+
 def test_packed_trl_reward_records_include_think_metrics():
     _rewards, records = packed_trl_reward_records(
         prompts=["prompt"],

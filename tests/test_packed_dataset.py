@@ -1,5 +1,6 @@
 from iso_rlvr.data.build_packed_dataset import (
     build_packed_prompt,
+    explode_family,
     pack_dataset,
     pack_family,
     parse_family_types,
@@ -115,6 +116,52 @@ def test_pack_dataset_can_limit_variants_per_family_for_smoke_tests():
     assert packed[0]["variant_ids"] == ["fam_000001_v0", "fam_000001_v1"]
     assert "Answer 2: <number>" in packed[0]["prompt"]
     assert "Answer 3: <number>" not in packed[0]["prompt"]
+
+
+def test_explode_family_emits_one_single_variant_row_per_variant():
+    rows = [_row("fam_000001", 1), _row("fam_000001", 0)]
+
+    exploded = explode_family(rows, prompt_format="xml")
+
+    assert len(exploded) == 2
+    assert [row["row_id"] for row in exploded] == [
+        "fam_000001::fam_000001_v0",
+        "fam_000001::fam_000001_v1",
+    ]
+    assert all(row["num_variants"] == 1 for row in exploded)
+    assert all(row["family_id"] == "fam_000001" for row in exploded)
+    assert "Problem 1: Problem text 0?" in exploded[0]["prompt"]
+    assert "Problem 2:" not in exploded[0]["prompt"]
+    assert "<answer_1>number</answer_1>" in exploded[0]["prompt"]
+    assert "<answer_2>" not in exploded[0]["prompt"]
+
+
+def test_pack_dataset_explode_variants_respects_family_filters():
+    rows = [
+        _row("fam_000001", 0),
+        _row("fam_000001", 1),
+        _row("fam_000001", 2),
+        _row("fam_000001", 3),
+        _row("fam_000002", 0, "chinese_remainder"),
+        _row("fam_000002", 1, "chinese_remainder"),
+        _row("fam_000002", 2, "chinese_remainder"),
+        _row("fam_000002", 3, "chinese_remainder"),
+    ]
+
+    exploded = pack_dataset(
+        rows,
+        include_family_types={"missing_average"},
+        expected_variants=4,
+        max_variants_per_family=2,
+        prompt_format="xml",
+        explode_variants=True,
+    )
+
+    assert [row["row_id"] for row in exploded] == [
+        "fam_000001::fam_000001_v0",
+        "fam_000001::fam_000001_v1",
+    ]
+    assert all(row["num_variants"] == 1 for row in exploded)
 
 
 def test_parse_family_types_supports_repeated_and_comma_separated_values():
