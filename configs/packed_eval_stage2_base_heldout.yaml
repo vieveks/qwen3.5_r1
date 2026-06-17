@@ -1,0 +1,15 @@
+# Phase 9 Stage 2 gate: untrained starting policy (base Qwen3-1.7B, no adapter) on the
+# overlap-filtered heldout. Greedy. Same chat-template/thinking-off contract as training.
+model_name: Qwen/Qwen3-1.7B
+dataset_path: data/stage2_packed_heldout1024.jsonl
+output_path: outputs/phase9/stage2/eval_base_heldout.jsonl
+device: auto
+
+apply_chat_template: true
+enable_thinking: false
+system_prompt: "Solve each math problem. Return only the requested XML answer block, with no reasoning or extra text."
+
+max_new_tokens: 192
+temperature: 0.0
+top_p: 1.0
+resume: true

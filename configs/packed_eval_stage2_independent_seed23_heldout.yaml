@@ -1,0 +1,16 @@
+# Phase 9 Stage 2 gate: trained independent arm (Qwen3-1.7B + Stage 2 LoRA) on the same
+# overlap-filtered heldout. Greedy. Paired with the base eval by family_id.
+model_name: Qwen/Qwen3-1.7B
+adapter_path: outputs/phase9/stage2/independent_seed23/adapter_or_model
+dataset_path: data/stage2_packed_heldout1024.jsonl
+output_path: outputs/phase9/stage2/eval_independent_seed23_heldout.jsonl
+device: auto
+
+apply_chat_template: true
+enable_thinking: false
+system_prompt: "Solve each math problem. Return only the requested XML answer block, with no reasoning or extra text."
+
+max_new_tokens: 192
+temperature: 0.0
+top_p: 1.0
+resume: true

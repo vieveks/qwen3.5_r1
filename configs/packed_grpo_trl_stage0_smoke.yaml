@@ -1,0 +1,50 @@
+# Phase 9 Stage 0 smoke: prove the ported trl 1.x trainer trains on GPU, saves an
+# adapter, and logs nonzero reward variance. Instruct model, fresh LoRA (no SFT bridge).
+model_name: Qwen/Qwen3-1.7B
+# no adapter_path -> GRPOTrainer attaches a fresh LoRA
+train_dataset: data/stage0_packed_xml_train.jsonl
+eval_dataset: data/stage0_packed_xml_heldout.jsonl
+output_dir: outputs/phase9/stage0_smoke
+device: auto
+seed: 23
+
+max_steps: 5
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 1
+num_generations: 4
+max_completion_length: 128
+max_new_tokens: 128
+temperature: 0.7
+top_p: 1.0
+learning_rate: 0.000001
+
+# Phase 9 trl 1.x knobs
+beta: 0.0
+loss_type: dr_grpo
+scale_rewards: group
+mask_truncated_completions: true
+bf16: true
+use_vllm: false
+
+# LoRA (fresh)
+lora_r: 16
+lora_alpha: 32
+lora_target_modules: q_proj,k_proj,v_proj,o_proj
+
+logging_steps: 1
+save_steps: 5
+save_strategy: steps
+save_total_limit: 1
+
+# reward (verifier)
+reward_mode: verifier
+family_bonus_enabled: false
+parse_complete_threshold: 0.95
+reward_std_threshold: 0.05
+format_reward: 0.05
+missing_format_penalty: -0.10
+extra_answer_penalty: 0.10
+length_penalty_weight: 0.05
+
+# keep the final greedy eval cheap for a smoke
+max_eval_examples: 16

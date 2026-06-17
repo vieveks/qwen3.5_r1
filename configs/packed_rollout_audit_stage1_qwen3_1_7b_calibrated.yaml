@@ -1,0 +1,20 @@
+# Phase 9 Stage 1: zero-shot packed XML rollout audit of Qwen3-1.7B (no SFT).
+# Chat template on, thinking disabled, sampled at the training temperature.
+# Gate: sampled parse_complete_rate >= 0.95 AND family accuracy in [0.20, 0.60].
+model_name: Qwen/Qwen3-1.7B
+dataset_path: data/stage0_packed_xml_heldout.jsonl
+output_path: outputs/phase9/stage1/audit_qwen3_1_7b_calibrated.jsonl
+device: auto
+
+apply_chat_template: true
+enable_thinking: false
+system_prompt: "Solve each math problem. Return only the requested XML answer block, with no reasoning or extra text."
+
+samples_per_prompt: 8
+max_examples: 32
+max_new_tokens: 256
+temperature: 0.7
+top_p: 1.0
+
+parse_complete_threshold: 0.95
+reward_std_threshold: 0.05

@@ -10,7 +10,7 @@ from peft import PeftModel
 from tqdm import tqdm
 
 from iso_rlvr.eval.packed_diagnostics import diagnose_packed_parse
-from iso_rlvr.eval.run_eval import generate_one
+from iso_rlvr.eval.run_eval import generate_batched, generate_one
 from iso_rlvr.io import load_yaml, read_jsonl
 from iso_rlvr.modeling import count_completion_tokens, load_causal_lm
 from iso_rlvr.rewards.packed_iso import score_packed_completion
@@ -60,11 +60,20 @@ def build_generation_prompt(tokenizer: Any, row_prompt: str, cfg: dict[str, Any]
         messages.append({"role": "system", "content": str(system_prompt)})
     messages.append({"role": "user", "content": row_prompt})
 
+    # Qwen3 (and other hybrid-reasoning templates) gate chain-of-thought on an
+    # `enable_thinking` template kwarg. Phase 9 runs with thinking disabled, but the
+    # kwarg is only forwarded when the config sets it, so templates that do not accept
+    # it (e.g. Llama-3.2-Instruct) keep working unchanged.
+    template_kwargs: dict[str, Any] = {}
+    if "enable_thinking" in cfg:
+        template_kwargs["enable_thinking"] = bool(cfg["enable_thinking"])
+
     try:
         rendered_prompt = tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=True,
+            **template_kwargs,
         )
     except Exception as exc:
         raise ValueError(
@@ -128,6 +137,59 @@ def summarize_packed_eval_rows(
     return summary
 
 
+def build_eval_record(
+    row: dict[str, Any],
+    response: str,
+    prompt: str,
+    response_prefix: str,
+    tokenizer: Any,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    response_tokens = count_completion_tokens(tokenizer, prompt, response)
+    parsed_response = response_prefix + response
+    scored = score_packed_completion(
+        parsed_response,
+        row["gold_answers"],
+        response_tokens=response_tokens,
+    )
+    diagnostics = diagnose_packed_parse(scored.parse, row["gold_answers"])
+    think_diagnostics = think_block_diagnostics(parsed_response)
+    return {
+        **row,
+        "apply_chat_template": bool(cfg.get("apply_chat_template", False)),
+        "response_prefix": response_prefix,
+        "generation_prompt": prompt,
+        "model_response": response,
+        "parsed_response": parsed_response,
+        "parsed_answers": scored.parse.answers,
+        "missing_indices": scored.parse.missing_indices,
+        "extra_answers": scored.parse.extra_answers,
+        "parse_mode": scored.parse.mode,
+        "parse_complete": scored.parse.complete,
+        "correctness": scored.correctness,
+        "family_mean": scored.family_mean,
+        "all_family_correct": scored.all_family_correct,
+        "reward": scored.reward,
+        "format_component": scored.format_component,
+        "family_component": scored.family_component,
+        "extra_answer_penalty": scored.extra_answer_penalty,
+        "length_penalty": scored.length_penalty,
+        "response_tokens": response_tokens,
+        **think_diagnostics,
+        "diagnostics": {
+            "repeated_answer": diagnostics.repeated_answer,
+            "copied_answer_indices": diagnostics.copied_answer_indices,
+            "only_first_answer": diagnostics.only_first_answer,
+            "missing_indices": diagnostics.missing_indices,
+            "extra_answer_count": diagnostics.extra_answer_count,
+            "answer_count_mismatch": diagnostics.answer_count_mismatch,
+            "same_wrong_additive_offset": diagnostics.same_wrong_additive_offset,
+            "same_wrong_multiplicative_offset": diagnostics.same_wrong_multiplicative_offset,
+            "suspicious": diagnostics.suspicious,
+        },
+    }
+
+
 def run_packed_eval(config_path: Path) -> None:
     cfg = load_yaml(config_path)
     rows = read_jsonl(cfg["dataset_path"])
@@ -146,62 +208,30 @@ def run_packed_eval(config_path: Path) -> None:
         model = PeftModel.from_pretrained(model, cfg["adapter_path"])
         model.eval()
 
+    batch_size = int(cfg.get("batch_size", 1))
+    response_prefix = str(cfg.get("response_prefix", ""))
+    pending = [row for row in rows if row.get("row_id", row["family_id"]) not in completed]
+
     log_mode = "a" if resume and output_path.exists() else "w"
     with output_path.open(log_mode, encoding="utf-8") as output_handle:
-        for row in tqdm(rows, desc="packed-eval"):
-            row_key = row.get("row_id", row["family_id"])
-            if row_key in completed:
-                continue
-            response_prefix = str(cfg.get("response_prefix", ""))
-            prompt = build_generation_prompt(tokenizer, row["prompt"], cfg)
-            response = generate_one(model, tokenizer, prompt, cfg)
-            response_tokens = count_completion_tokens(tokenizer, prompt, response)
-            parsed_response = response_prefix + response
-            scored = score_packed_completion(
-                parsed_response,
-                row["gold_answers"],
-                response_tokens=response_tokens,
-            )
-            diagnostics = diagnose_packed_parse(scored.parse, row["gold_answers"])
-            think_diagnostics = think_block_diagnostics(parsed_response)
-            result = {
-                **row,
-                "apply_chat_template": bool(cfg.get("apply_chat_template", False)),
-                "response_prefix": response_prefix,
-                "generation_prompt": prompt,
-                "model_response": response,
-                "parsed_response": parsed_response,
-                "parsed_answers": scored.parse.answers,
-                "missing_indices": scored.parse.missing_indices,
-                "extra_answers": scored.parse.extra_answers,
-                "parse_mode": scored.parse.mode,
-                "parse_complete": scored.parse.complete,
-                "correctness": scored.correctness,
-                "family_mean": scored.family_mean,
-                "all_family_correct": scored.all_family_correct,
-                "reward": scored.reward,
-                "format_component": scored.format_component,
-                "family_component": scored.family_component,
-                "extra_answer_penalty": scored.extra_answer_penalty,
-                "length_penalty": scored.length_penalty,
-                "response_tokens": response_tokens,
-                **think_diagnostics,
-                "diagnostics": {
-                    "repeated_answer": diagnostics.repeated_answer,
-                    "copied_answer_indices": diagnostics.copied_answer_indices,
-                    "only_first_answer": diagnostics.only_first_answer,
-                    "missing_indices": diagnostics.missing_indices,
-                    "extra_answer_count": diagnostics.extra_answer_count,
-                    "answer_count_mismatch": diagnostics.answer_count_mismatch,
-                    "same_wrong_additive_offset": diagnostics.same_wrong_additive_offset,
-                    "same_wrong_multiplicative_offset": diagnostics.same_wrong_multiplicative_offset,
-                    "suspicious": diagnostics.suspicious,
-                },
-            }
-            outputs.append(result)
-            completed.add(row_key)
-            output_handle.write(json.dumps(result, sort_keys=True) + "\n")
-            output_handle.flush()
+        if batch_size > 1:
+            for start in tqdm(range(0, len(pending), batch_size), desc="packed-eval"):
+                batch = pending[start : start + batch_size]
+                prompts = [build_generation_prompt(tokenizer, r["prompt"], cfg) for r in batch]
+                per_prompt = generate_batched(model, tokenizer, prompts, cfg, num_return_sequences=1)
+                for r, prompt, responses in zip(batch, prompts, per_prompt):
+                    result = build_eval_record(r, responses[0], prompt, response_prefix, tokenizer, cfg)
+                    outputs.append(result)
+                    output_handle.write(json.dumps(result, sort_keys=True) + "\n")
+                output_handle.flush()
+        else:
+            for row in tqdm(pending, desc="packed-eval"):
+                prompt = build_generation_prompt(tokenizer, row["prompt"], cfg)
+                response = generate_one(model, tokenizer, prompt, cfg)
+                result = build_eval_record(row, response, prompt, response_prefix, tokenizer, cfg)
+                outputs.append(result)
+                output_handle.write(json.dumps(result, sort_keys=True) + "\n")
+                output_handle.flush()
 
     summary = summarize_packed_eval_rows(outputs)
     summary_path = output_path.with_suffix(".summary.json")

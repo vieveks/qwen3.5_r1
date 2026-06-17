@@ -11,7 +11,7 @@ from peft import PeftModel
 from tqdm import tqdm
 
 from iso_rlvr.eval.packed_diagnostics import diagnose_packed_parse
-from iso_rlvr.eval.run_eval import generate_one
+from iso_rlvr.eval.run_eval import generate_batched, generate_one
 from iso_rlvr.eval.run_packed_eval import build_generation_prompt, think_block_diagnostics
 from iso_rlvr.io import load_yaml, read_jsonl
 from iso_rlvr.modeling import count_completion_tokens, load_causal_lm
@@ -182,6 +182,63 @@ def summarize_rollout_records(
     }
 
 
+def build_audit_record(
+    row: dict[str, Any],
+    sample_idx: int,
+    response: str,
+    prompt: str,
+    response_prefix: str,
+    reward_cfg: PackedRewardConfig,
+    tokenizer: Any,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    response_tokens = count_completion_tokens(tokenizer, prompt, response)
+    parsed_response = response_prefix + response
+    scored = score_packed_completion(
+        parsed_response,
+        row["gold_answers"],
+        response_tokens=response_tokens,
+        config=reward_cfg,
+    )
+    diagnostics = diagnose_packed_parse(scored.parse, row["gold_answers"])
+    think_diagnostics = think_block_diagnostics(parsed_response)
+    return {
+        **row,
+        "sample_idx": sample_idx,
+        "apply_chat_template": bool(cfg.get("apply_chat_template", False)),
+        "response_prefix": response_prefix,
+        "generation_prompt": prompt,
+        "model_response": response,
+        "parsed_response": parsed_response,
+        "parsed_answers": scored.parse.answers,
+        "missing_indices": scored.parse.missing_indices,
+        "extra_answers": scored.parse.extra_answers,
+        "parse_mode": scored.parse.mode,
+        "parse_complete": scored.parse.complete,
+        "correctness": scored.correctness,
+        "family_mean": scored.family_mean,
+        "all_family_correct": scored.all_family_correct,
+        "reward": scored.reward,
+        "format_component": scored.format_component,
+        "family_component": scored.family_component,
+        "extra_answer_penalty": scored.extra_answer_penalty,
+        "length_penalty": scored.length_penalty,
+        "response_tokens": response_tokens,
+        **think_diagnostics,
+        "diagnostics": {
+            "repeated_answer": diagnostics.repeated_answer,
+            "copied_answer_indices": diagnostics.copied_answer_indices,
+            "only_first_answer": diagnostics.only_first_answer,
+            "missing_indices": diagnostics.missing_indices,
+            "extra_answer_count": diagnostics.extra_answer_count,
+            "answer_count_mismatch": diagnostics.answer_count_mismatch,
+            "same_wrong_additive_offset": diagnostics.same_wrong_additive_offset,
+            "same_wrong_multiplicative_offset": diagnostics.same_wrong_multiplicative_offset,
+            "suspicious": diagnostics.suspicious,
+        },
+    }
+
+
 def run_packed_rollout_audit(config_path: Path) -> None:
     cfg = load_yaml(config_path)
     rows = read_jsonl(cfg["dataset_path"])
@@ -201,84 +258,65 @@ def run_packed_rollout_audit(config_path: Path) -> None:
         model.eval()
 
     samples_per_prompt = int(cfg.get("samples_per_prompt", 4))
+    batch_size = int(cfg.get("batch_size", 1))
     reward_cfg = pure_format_correctness_reward_config(cfg)
+    response_prefix = str(cfg.get("response_prefix", ""))
     records = []
     malformed_samples = []
     max_malformed_samples = int(cfg.get("max_malformed_samples", 20))
 
-    with output_path.open("w", encoding="utf-8") as output_handle:
-        for row in tqdm(rows, desc="packed-rollout-audit"):
-            response_prefix = str(cfg.get("response_prefix", ""))
-            prompt = build_generation_prompt(tokenizer, row["prompt"], cfg)
-            for sample_idx in range(samples_per_prompt):
-                response = generate_one(model, tokenizer, prompt, cfg)
-                response_tokens = count_completion_tokens(tokenizer, prompt, response)
-                parsed_response = response_prefix + response
-                scored = score_packed_completion(
-                    parsed_response,
-                    row["gold_answers"],
-                    response_tokens=response_tokens,
-                    config=reward_cfg,
-                )
-                diagnostics = diagnose_packed_parse(scored.parse, row["gold_answers"])
-                think_diagnostics = think_block_diagnostics(parsed_response)
-                result = {
-                    **row,
-                    "sample_idx": sample_idx,
-                    "apply_chat_template": bool(cfg.get("apply_chat_template", False)),
-                    "response_prefix": response_prefix,
-                    "generation_prompt": prompt,
-                    "model_response": response,
-                    "parsed_response": parsed_response,
-                    "parsed_answers": scored.parse.answers,
-                    "missing_indices": scored.parse.missing_indices,
-                    "extra_answers": scored.parse.extra_answers,
-                    "parse_mode": scored.parse.mode,
-                    "parse_complete": scored.parse.complete,
-                    "correctness": scored.correctness,
-                    "family_mean": scored.family_mean,
-                    "all_family_correct": scored.all_family_correct,
-                    "reward": scored.reward,
-                    "format_component": scored.format_component,
-                    "family_component": scored.family_component,
-                    "extra_answer_penalty": scored.extra_answer_penalty,
-                    "length_penalty": scored.length_penalty,
-                    "response_tokens": response_tokens,
-                    **think_diagnostics,
-                    "diagnostics": {
-                        "repeated_answer": diagnostics.repeated_answer,
-                        "copied_answer_indices": diagnostics.copied_answer_indices,
-                        "only_first_answer": diagnostics.only_first_answer,
-                        "missing_indices": diagnostics.missing_indices,
-                        "extra_answer_count": diagnostics.extra_answer_count,
-                        "answer_count_mismatch": diagnostics.answer_count_mismatch,
-                        "same_wrong_additive_offset": diagnostics.same_wrong_additive_offset,
-                        "same_wrong_multiplicative_offset": diagnostics.same_wrong_multiplicative_offset,
-                        "suspicious": diagnostics.suspicious,
-                    },
+    def handle(result: dict[str, Any], output_handle) -> None:
+        if (
+            (not result["parse_complete"] or result["diagnostics"]["answer_count_mismatch"])
+            and len(malformed_samples) < max_malformed_samples
+        ):
+            malformed_samples.append(
+                {
+                    "family_id": result["family_id"],
+                    "family_type": result["family_type"],
+                    "sample_idx": result["sample_idx"],
+                    "gold_answers": result["gold_answers"],
+                    "parsed_answers": result["parsed_answers"],
+                    "parse_mode": result["parse_mode"],
+                    "missing_indices": result["missing_indices"],
+                    "extra_answers": result["extra_answers"],
+                    "diagnostics": result["diagnostics"],
+                    "full_completion": result["model_response"],
+                    "full_parsed_response": result["parsed_response"],
                 }
-                if (
-                    (not scored.parse.complete or diagnostics.answer_count_mismatch)
-                    and len(malformed_samples) < max_malformed_samples
-                ):
-                    malformed_samples.append(
-                        {
-                            "family_id": row["family_id"],
-                            "family_type": row["family_type"],
-                            "sample_idx": sample_idx,
-                            "gold_answers": row["gold_answers"],
-                            "parsed_answers": scored.parse.answers,
-                            "parse_mode": scored.parse.mode,
-                            "missing_indices": scored.parse.missing_indices,
-                            "extra_answers": scored.parse.extra_answers,
-                            "diagnostics": result["diagnostics"],
-                            "full_completion": response,
-                            "full_parsed_response": parsed_response,
-                        }
-                    )
-                records.append(result)
-                output_handle.write(json.dumps(result, sort_keys=True) + "\n")
+            )
+        records.append(result)
+        output_handle.write(json.dumps(result, sort_keys=True) + "\n")
+
+    with output_path.open("w", encoding="utf-8") as output_handle:
+        if batch_size > 1:
+            # Batched path: one model.generate per chunk of prompts, each expanded to
+            # samples_per_prompt return sequences. Much faster than the per-sample loop.
+            for start in tqdm(
+                range(0, len(rows), batch_size), desc="packed-rollout-audit"
+            ):
+                batch_rows = rows[start : start + batch_size]
+                prompts = [build_generation_prompt(tokenizer, r["prompt"], cfg) for r in batch_rows]
+                per_prompt = generate_batched(
+                    model, tokenizer, prompts, cfg, num_return_sequences=samples_per_prompt
+                )
+                for r, prompt, responses in zip(batch_rows, prompts, per_prompt):
+                    for sample_idx, response in enumerate(responses):
+                        result = build_audit_record(
+                            r, sample_idx, response, prompt, response_prefix, reward_cfg, tokenizer, cfg
+                        )
+                        handle(result, output_handle)
                 output_handle.flush()
+        else:
+            for row in tqdm(rows, desc="packed-rollout-audit"):
+                prompt = build_generation_prompt(tokenizer, row["prompt"], cfg)
+                for sample_idx in range(samples_per_prompt):
+                    response = generate_one(model, tokenizer, prompt, cfg)
+                    result = build_audit_record(
+                        row, sample_idx, response, prompt, response_prefix, reward_cfg, tokenizer, cfg
+                    )
+                    handle(result, output_handle)
+                    output_handle.flush()
 
     summary = summarize_rollout_records(
         records,

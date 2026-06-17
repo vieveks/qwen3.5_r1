@@ -1,8 +1,13 @@
 # Phase 9: Make RLVR Move At All, Then Re-Test Iso
 
-Status: planned
+Status: Stages 0–3 complete. Stage 2 prerequisite PASSED (RLVR beats base, CI excludes
+zero); Stage 3 iso re-test is a CLEAN NULL — iso ≈ independent, both > base, random flat.
+The isomorphism reward adds nothing over a plain correctness reward at this scale.
 
-Date: 2026-06-12
+Date: 2026-06-12 (plan); 2026-06-14 (Stage 0–1 execution)
+
+See the [Execution Log](#execution-log) at the end for in-depth substep results and the
+design choices made during the port.
 
 ## Purpose
 
@@ -331,3 +336,391 @@ on both seeds; the random arm is flat; the effect survives on Llama-3.2-3B.
 - Dr. GRPO (length/std bias in GRPO): arXiv 2503.20783
 - DAPO (dynamic sampling, applied here as offline pass-rate filtering): arXiv 2503.14476
 - vLLM on Windows status (WSL2 is the supported path): no native support as of 2026-05
+
+## Execution Log
+
+In-depth record of what was actually run, the design choices made along the way, and
+the substep results. Newest stage last.
+
+### Environment (Ubuntu migration, 2026-06-14)
+
+Hardware/OS layer came up clean: Ubuntu 24.04, NVIDIA driver 580.159.03 (well above the
+R570 Blackwell floor), RTX 5070 Ti 16 GB, `torch.cuda.is_available()` true, a real
+matmul ran on `sm_120`.
+
+Environment decision: a dedicated conda env **`env_rlvr`** (Python 3.12), not the
+README's `iso_rlvr` name and not any pre-existing env (none had the RL stack). torch was
+installed from the cu128 index; the rest via `pip install -e ".[dev]"`.
+
+Resolved pinned stack (exact versions, recorded per the Stack Decision):
+
+```text
+torch==2.11.0+cu128   trl==1.5.1            transformers==5.12.0
+peft==0.19.1          datasets==5.0.0       accelerate==1.14.0   numpy==2.4.6
+```
+
+`transformers` resolved to 5.12.0 — a stable release, not the 5.10.0.dev0 build that
+drifted in Phase 8. `pyproject.toml` pin changed `trl==0.17.0` → `trl==1.5.1`.
+
+Gotcha worth recording: the shell exports `PYTHONPATH=/opt/ros/jazzy/lib/python3.12/...`
+(ROS Jazzy). That makes pytest auto-load ROS's `launch_testing` plugin, which dies on a
+missing `lark`. All project commands run with `PYTHONPATH=""` (tests) or `PYTHONPATH=src`
+(module runs). With it cleared, the suite is **136 passed**.
+
+### Stage 0: Infrastructure port (complete, 2026-06-14)
+
+**Trainer port — `src/iso_rlvr/train/packed_grpo_trl.py`.** Forward-ported the trl 0.17
+config surface to trl 1.x. Verified against the installed `GRPOConfig` dataclass before
+editing:
+
+- `max_prompt_length` is **gone** in trl 1.x (a runtime `TypeError` confirmed it twice) →
+  dropped. Packed prompts are short, so no truncation is needed.
+- `scale_rewards` is now a **string enum**, not a bool. Added `normalize_scale_rewards()`
+  to map the legacy `true/false` onto `"group"`/`"none"`; default `"group"`.
+- `beta` default → `0.0` (no KL), `loss_type` → `"dr_grpo"` (confirmed accepted by the
+  pinned release), `mask_truncated_completions` → `true`, `num_generations` default → 8.
+- `use_vllm` plumbed (plus `vllm_mode`, `vllm_gpu_memory_utilization`) but left off for
+  Stage 0; vLLM install is deferred to Stage 2.
+- **Design choice — fresh LoRA without an SFT bridge.** `adapter_path` is now optional.
+  When absent, the trainer builds a `LoraConfig` (`build_lora_config()`) and hands it to
+  `GRPOTrainer(peft_config=...)`. This is what makes the Phase 9 "instruct model, no SFT
+  bridge" decision concrete: the Phase 5 bridge layer disappears from the code path.
+
+**Datasets/pyarrow fix (a real bug, not just a port).** `datasets==5.0.0` / pyarrow 24
+refuse to build the `metadata` column: it is a per-family list of dicts whose value types
+differ across family types and across fraction-vs-int answers (e.g. `b` is an `int` for
+one family and the string `"13/5"` for another), so Arrow cannot infer a single struct
+type and raises `ArrowInvalid`. This would break **every** mixed-family training run, not
+just the smoke. Fix: `arrow_safe_rows()` JSON-encodes `metadata` (diagnostic-only; the
+reward never reads it for scoring) into a uniform string column before
+`Dataset.from_list`.
+
+**Datasets regenerated** from documented seeds into `data/` (gitignored, empty on clone):
+`stage0_packed_xml_train.jsonl` (256 rows, seed 29) and `stage0_packed_xml_heldout.jsonl`
+(128 rows, seed 101), both `calibrated`, packed two-variant XML.
+
+**Smoke run** (`configs/packed_grpo_trl_stage0_smoke.yaml`, Qwen3-1.7B, fresh LoRA, 5
+steps): trains, saves an adapter, and logs nonzero reward variance (`reward_std` 0.26,
+0.065, …) → **Stage 0 gate met on its literal terms**, with `pytest` 136 passed and ruff
+clean.
+
+But the smoke also surfaced the Stage 1 prerequisite. The run trained with **zero
+gradient** (`grad_norm: 0`) despite reward variance, because `completions/clipped_ratio`
+was `1.0` (every completion hit the token cap, none emitted EOS) and
+`mask_truncated_completions: true` then masked all of them. A control run with masking off
+gave nonzero `grad_norm` (0.49/0.48/0.76) exactly when `reward_std > 0`, proving the
+optimizer path is healthy. Root cause of the non-termination: the model was fed the
+packed prompt as **raw text**; an instruct/thinking model rambles in CoT instead of
+emitting the terse XML. That is precisely what Stage 1 fixes.
+
+### Stage 1: Model bring-up without SFT (in progress, 2026-06-14)
+
+**Design choice — chat template at run time, not baked into the data.** `apply_chat_template`
+already existed in the eval path (`build_generation_prompt`), but it did not disable
+thinking. Qwen3 gates chain-of-thought on an `enable_thinking` template kwarg. Added an
+`enable_thinking` passthrough that is forwarded to `apply_chat_template` **only when the
+config sets it**, so templates that do not accept it (Llama-3.2-Instruct) keep working.
+The trainer now renders its training prompts through the same `build_generation_prompt`,
+so trainer prompts, the trainer's final greedy eval, and the rollout audit all share one
+prompt-formatting path. Datasets stay model-agnostic; the template is applied per-model.
+
+Verified the render: with `enable_thinking=False`, Qwen3 appends an empty
+`<think>\n\n</think>` block after the assistant turn (its "thinking done" signal), so the
+model goes straight to the answer.
+
+**Substep 1 — format is solved.** A confirm audit of Qwen3-1.7B (chat template on,
+thinking off, temp 0.7) on the `calibrated` heldout produced clean
+`<answers>…</answers>` XML: `parse_complete_rate` 0.94, `think_block_rate` 0.00,
+`answer_count_mismatch` 0.06. The Phase 5/7 format problem is gone for free on an instruct
+model — exactly the Phase 9 bet.
+
+**Substep 2 — difficulty tuning (the [0.20, 0.60] band).** On `calibrated` the model
+parsed cleanly but scored **0.00 accuracy** on every family type: `calibrated` is 9/10
+fraction-heavy hard/challenge families, tuned for the old Qwen2.5-Math base, and is simply
+too hard for Qwen3-1.7B zero-shot. Per the Stage 1 design ("the profile is tuned to land
+in that band; that is what the band is for"), regenerated `easy` and `mixed` packed sets
+(seed 101) and re-audited (24 families × 8 samples, temp 0.7).
+
+| Profile | parse_complete | accuracy | family_accuracy | in [0.20, 0.60]? |
+| --- | ---: | ---: | ---: | :---: |
+| calibrated | 0.94 | 0.00 | 0.00 | ✗ too hard |
+| mixed | 0.958 | 0.383 | 0.318 | ✓ |
+| easy | 0.953 | 0.570 | 0.474 | ✓ |
+
+Per-family-type accuracy on `mixed` (the spread that matters for GRPO contrast):
+
+```text
+saturated (~1.0):  proportional 1.00, unit_conversion 1.00, linear_equation 0.94
+mid (contrastful): quadratic_root 0.67, modular 0.21
+dead (0.00):       rational_linear_equation, two_variable_system, nested_linear_equation
+```
+
+**Stage 1 gate: PASSED for Qwen3-1.7B.** `parse_complete_rate` 0.958 ≥ 0.95 and family
+accuracy 0.318 ∈ [0.20, 0.60], with `think_block_rate` 0.00 and no SFT. The Phase 9 bet —
+that an instruct model gets the packed XML contract for free — holds: the entire Phase 5
+SFT-bridge layer is gone.
+
+**Design choice — `mixed` is the Stage 2 profile.** Both `mixed` and `easy` pass, but
+`mixed` (family acc 0.318) sits more centrally in the band, leaving headroom to detect a
+gain before saturation, and it retains the harder families the Dataset Decision calls for.
+Its graded difficulty is what offline pass-rate filtering (Stage 2) needs: the dead-0
+families drop out, the saturated families drop out, and the contrastful middle
+(modular, quadratic_root, the partial linear types) is what remains to train on. `easy`
+(0.474) stays on the bench as a higher-baseline fallback.
+
+**Findings worth recording.**
+
+- *Affine answers come back as unevaluated expressions.* On `mixed`, `affine` parsed at
+  0.00 because the model emitted `<answer_1>23 + (7 * 11)</answer_1>` instead of `100`.
+  This is genuine model behavior (it left the arithmetic unevaluated), not a parser bug,
+  and it correctly scores as incomplete/wrong. The packed verifier contract is unchanged:
+  the instruction asks for a number, and an expression is a miss.
+- *The `calibrated` train mix from the original plan is unreachable zero-shot.* The
+  Dataset Decision's intended hard mix (rational/system/CRT) is 0.00 for Qwen3-1.7B before
+  any training, so Stage 2 trains on `mixed` and lets the difficulty filter, refreshed at
+  the run midpoint, follow the frontier upward.
+
+Remaining Stage 1 step before Stage 2: a full-coverage sampled audit over the Stage 2
+**train** set (8 samples/prompt) to feed `filter_by_pass_rate` (the Stage 2 difficulty
+filter). The Llama-3.2-3B control bring-up is deferred to Stage 4 (external validity),
+per the ladder.
+
+### Stage 2: Independent RLVR at scale (in progress, 2026-06-14)
+
+**Scale decision — reduced first pass without vLLM.** The plan's full Stage 2 is 2000+
+train families and a 1000-family heldout. Without vLLM the difficulty audit is unbatched
+(`generate_one` one sample at a time), so a 2000×8 audit is ~10 GPU-hours and impractical
+to babysit. This first pass runs at reduced scale — **384-family train pool, 1000-family
+heldout** — with the full-scale rerun deferred to when vLLM lands. The gate logic and
+tooling are identical at either scale.
+
+**The new difficulty filter — `src/iso_rlvr/data/filter_by_pass_rate.py`** (the offline
+DAPO-dynamic-sampling tool from the Dataset Decision). It reads the sampled rollout audit,
+computes each packed family's pass rate at the family level (`all_family_correct`), and
+keeps only families with strictly `0 < pass_rate < 1` — the contrastful middle. Saturated
+(pass 1) and hopeless (pass 0) families carry zero GRPO advantage and are dropped. Band is
+configurable for the gate's permitted retune. Unit-tested (3 tests).
+
+**Datasets** (`mixed` profile, the Stage 1 pick):
+
+```text
+train pool : data/stage2_packed_train.jsonl     384 families, seed 29
+heldout    : data/stage2_packed_heldout.jsonl   1000 generated, seed 101
+             -> 138 families dropped by the family-level overlap filter vs the train
+                generation (overlap_count 0) -> 862 paired heldout families
+```
+
+**Trainer additions for this stage.** Added a `run_final_eval` flag (default true) so the
+300-step run can skip the trainer's built-in greedy eval; the gate eval is run separately
+as a paired bootstrap on the full 862-family heldout. The independent arm sets
+`family_bonus_enabled: false` (pure format + correctness reward, no family/iso term).
+
+**Design choice — no mid-run filter refresh in the first pass.** The plan refreshes the
+difficulty filter at step 150. This first pass runs a single 300-step job with one filter
+pass and records that simplification; the mid-run refresh is a refinement for the
+vLLM-enabled full run. The Stage-1 chat-template fix means completions now terminate, so
+`mask_truncated_completions: true` no longer zeroes the gradient (the Stage 0 failure mode).
+
+**Configs:** `packed_rollout_audit_stage2_train_qwen3_1_7b.yaml` (difficulty audit),
+`packed_grpo_trl_stage2_independent_seed23.yaml` (300-step train, num_generations 8,
+lr 1e-6, beta 0.0, dr_grpo, no vLLM), `packed_eval_stage2_{base,independent_seed23}_heldout.yaml`
+(greedy gate evals), compared with `eval.bootstrap_compare`.
+
+Gate (pre-registered): `family_accuracy(independent) - family_accuracy(base)` with a 95%
+paired-bootstrap CI that excludes zero.
+
+**Substep results.**
+
+*Difficulty audit + filter.* 1024-family `mixed` pool, 8 samples/prompt at temp 0.7 (the
+audit was stopped at 1008/1024 families by an external kill; the 8062 records are complete
+enough to filter on). Pass-rate is sharply **bimodal**: 663 families all-wrong
+(pass 0), 261 all-correct (pass 1), and only **84 contrastful** (`0 < pass < 1`, ~8%).
+This is Cause 2 made quantitative — a 1.7B either solves a family every time or never; the
+trainable frontier is thin. `filter_by_pass_rate` kept those 84 families
+(`data/stage2_filtered_train1024.jsonl`), concentrated in quadratic_root, modular,
+linear_equation, and proportional.
+
+*Training.* 300 steps, num_generations 8, lr 1e-6, beta 0.0, dr_grpo, no vLLM. Completed
+in ~6 min (completions are terse XML, ~30 tokens, `clipped_ratio` 0 — the Stage 0
+zero-gradient failure mode is gone). `grad_norm` ~0.2-0.38, `reward_std` ~0.3,
+`frac_reward_zero_std` ~0.35 (a third of groups still flat even after filtering, because
+greedy-temp pass rate does not perfectly predict training-temp contrast). Reward stayed
+flat at ~0.6 at lr 1e-6.
+
+*Gate, run 1 (lr 1e-6).* Heldout 814 paired families, greedy, paired bootstrap:
+
+```text
+base        family_acc 0.1966   acc 0.2918
+independent family_acc 0.2002   acc 0.2942
+family_accuracy delta +0.0037   95% CI [-0.0025, +0.0111]   sign-flip p 0.45
+-> FAIL (CI includes zero)
+```
+
+*Honest retune (lr 1e-6 -> 5e-6, filter band unchanged).* At lr 5e-6 the train reward
+climbed (0.63 -> ~0.85), i.e. the policy actually learned on the train families.
+
+*Gate, run 2 (lr 5e-6).*
+
+```text
+base               family_acc 0.1966   acc 0.2918
+independent_lr5e6  family_acc 0.2064   acc 0.2979
+family_accuracy delta +0.0098   95% CI [-0.0012, +0.0209]   sign-flip p 0.11
+-> FAIL (CI includes zero, lower bound essentially touching it)
+```
+
+Per-family-type movement (base -> lr5e6 family accuracy) shows the effect is **real but
+diluted**, not absent:
+
+```text
+quadratic_root  0.304 -> 0.380  (+0.076)   <- strong, the bulk of training contrast
+proportional    0.600 -> 0.630  (+0.030)
+affine          0.010 -> 0.020  (+0.010)
+modular         0.427 -> 0.415  (-0.012)   <- small regressions
+linear_equation 0.287 -> 0.278  (-0.009)
+nested / rational / two_variable (345 of 814 families) : 0.000 -> 0.000
+```
+
+**Stage 2 gate: FAILED after the one permitted retune** (lr + filter band only), so the
+pre-registered rule says Phase 9 stops at the null. But the honest reading is more
+specific than "RLVR does not move this substrate":
+
+1. RLVR *does* move the learnable family types — quadratic_root +7.6 points is a real,
+   directional gain concentrated exactly where the difficulty filter put the training
+   contrast.
+2. The overall gate fails largely by **dilution**: ~42% of the heldout (nested_linear,
+   rational_linear, two_variable_system) is at 0.000 accuracy zero-shot and cannot be
+   moved by RL at all, and the saturated types have no headroom. Averaging the movable
+   gain over an immovable majority washes the CI back across zero.
+3. This is the reduced-scale (no-vLLM) first pass: 84 training families, single filter
+   pass, no mid-run refresh. The full-scale plan (2000+ families, 1000-family heldout,
+   vLLM, filter refresh at step 150) has materially more training contrast and statistical
+   power, and run 2's CI lower bound at -0.0012 suggests the effect is near the resolution
+   floor rather than absent.
+
+Decision deferred to a design call (not a within-pre-registration patch): accept the null
+as written, or rerun at full scale with vLLM before judging the Stage 2 prerequisite. No
+iso arm (Stage 3) is run until Stage 2 passes.
+
+#### Stage 2 full-scale rerun (2026-06-14) — gate PASSED
+
+The decision was to rerun at full plan scale. vLLM turned out to be both incompatible and
+unnecessary (see below), so the full-scale rerun was done without it, with a batched audit.
+
+**vLLM is blocked on this stack, and isn't the needed lever.** vLLM 0.23.0 (latest) pins
+`torch==2.11.0` at the Python level but its kernels need CUDA 13 (`libcudart.so.13`) while
+our torch is cu128/CUDA 12.8 — it fails to import on Blackwell, and it drags in a broken
+`torchvision` that cascades into a transformers import error. It was rolled back cleanly
+from a `pip freeze` snapshot (env verified healthy, 139 tests). The deeper point: Stage 2
+training is only ~3 min / 150 steps without vLLM (completions are ~30-token XML, so HF
+generation is already cheap); the real bottleneck was the unbatched difficulty audit, which
+trl colocate-vLLM would not accelerate anyway. So instead of fighting vLLM, the audit got a
+**batched generation path** (`generate_batched` + `batch_size` in the rollout audit):
+the 2000-family × 8-sample audit dropped from ~10 GPU-hours to **~7 minutes** (~50-70x).
+
+**Full-scale setup.** 2000-family `mixed` train pool, 773-family overlap-filtered heldout
+(overlap_count 0), lr 5e-6, 300 steps split as two phases with a filter refresh at 150
+(the plan's mid-run refresh, implemented as: train 150 -> re-audit the pool with the step-150
+adapter -> re-filter -> train 150 more, continuing from the step-150 adapter).
+
+```text
+difficulty filter v1 (base policy)      : 155 contrastful families of 2000 (~8%)
+phase A (steps 0-150, lr 5e-6)          : train reward 0.62 -> 0.80
+re-audit with adapter A                 : train-pool family_acc 0.292 -> 0.306 (frontier moved)
+difficulty filter v2 (post-phase-A)     : 151 contrastful families
+phase B (steps 150-300, from adapter A) : train reward 0.70 -> 0.85
+```
+
+**Gate (773 paired heldout families, greedy, 10k-iter paired bootstrap):**
+
+```text
+base        family_acc 0.1940   acc 0.2878
+independent family_acc 0.2070   acc 0.2969
+family_accuracy delta +0.0129   95% CI [+0.0013, +0.0246]   sign-flip p 0.043
+variant accuracy delta +0.0091   95% CI [+0.0013, +0.0175]
+-> PASS (both CIs exclude zero)
+```
+
+Per-family-type (base -> trained family accuracy):
+
+```text
+quadratic_root  0.308 -> 0.385  (+0.077)   <- main driver (most training contrast)
+proportional    0.606 -> 0.628  (+0.021)
+affine          0.012 -> 0.024  (+0.012)
+nested_linear   0.000 -> 0.009  (+0.009)
+two_variable    0.061 -> 0.070  (+0.009)
+linear/modular  ~flat
+rational_linear 0.000 -> 0.000  (unmovable zero-shot)
+```
+
+**Stage 2 prerequisite is MET.** What flipped the result vs the reduced pass (which failed
+at +0.0098, CI grazing zero): nearly 2x the training contrast (155 vs 84 families), the
+mid-run filter refresh, and more statistical power (773 vs 814... comparable, but combined
+with the stronger train signal). The pre-registered gate — "can any RLVR signal at local
+scale produce a family-accuracy gain over the starting policy with a 95% CI excluding
+zero?" — is answered yes. **Stage 3 (the iso re-test) is now justified and unlocked.**
+
+### Stage 3: The iso re-test (in progress, 2026-06-14)
+
+**Pre-registered before running any arm.** Matched-compute matrix, identical settings,
+differing only in reward shape and seed. All arms: Qwen3-1.7B fresh LoRA, the SAME v1
+difficulty-filtered train set (155 families, from the base-policy audit), single-phase
+300 steps, lr 5e-6, beta 0.0, dr_grpo, num_generations 8, no vLLM. A fixed shared train
+set (no per-arm refresh) is deliberate: it removes the confound where different reward
+shapes would produce different refreshed training sets, isolating the reward variable.
+
+Reward shapes (the only training difference besides seed):
+
+```text
+independent : family_bonus_enabled false  -> reward = mean(correct + format) - penalties
+iso lam 0.50: family_mean_weight 0.25, all_family_correct_weight 0.25  (bonus on correct variants)
+iso lam 1.00: family_mean_weight 0.50, all_family_correct_weight 0.50
+random      : reward_mode random (Bernoulli 0.5), verifier records still logged
+```
+
+Arms: independent {23, 37}, iso0.50 {23, 37}, iso1.00 {23, 37}, random {23} — 7 total.
+
+Evaluation: each arm greedy on the 773-family heldout (batched), paired bootstrap vs the
+shared base eval (family_acc 0.1940) and paired iso-vs-independent at matched seed.
+
+Pre-registered reading rules (same structure as Phase 8):
+
+```text
+iso > independent with CI excluding zero on BOTH seeds, random arm flat : iso supported
+iso ~= independent, both > base                                         : RLVR works, family reward adds nothing
+random ~= independent gains                                             : gain is policy-drift, not signal; nothing claimed
+```
+
+**Results.** All 7 arms trained (300 steps each, ~6 min/arm) and evaluated greedy on the
+773-family heldout (batched). Family accuracy vs the shared base (0.1940):
+
+```text
+arm                family_acc   delta vs base   95% CI            p
+independent s23    0.2096       +0.0155         [+0.0052,+0.0272] 0.012  *
+independent s37    0.2083       +0.0142         [+0.0052,+0.0246] 0.012  *
+iso0.50     s23    0.2070       +0.0129         [+0.0026,+0.0233] 0.032  *
+iso0.50     s37    0.2096       +0.0155         [+0.0052,+0.0259] 0.009  *
+iso1.00     s23    0.2109       +0.0168         [+0.0052,+0.0285] 0.007  *
+iso1.00     s37    0.2044       +0.0103         [+0.0013,+0.0194] 0.056  *
+random      s23    0.1902       -0.0039         [-0.0116,+0.0039] 0.513     (flat)
+```
+
+`*` = 95% CI excludes zero. Every verifier arm beats base; the random-reward control is
+flat (CI includes zero) — so the gains are real RLVR signal, not policy drift.
+
+The decisive comparison, iso minus independent at matched seed:
+
+```text
+iso0.50 - independent (s23)   -0.0026   CI [-0.0103,+0.0052]   p 0.761
+iso0.50 - independent (s37)   +0.0013   CI [-0.0039,+0.0065]   p 1.000
+iso1.00 - independent (s23)   +0.0013   CI [-0.0065,+0.0091]   p 1.000
+iso1.00 - independent (s37)   -0.0039   CI [-0.0103,+0.0013]   p 0.384
+```
+
+All four CIs include zero; no iso advantage on either seed at either lambda.
+
+**Stage 3 verdict (pre-registered rule matched): "iso ~= independent, both > base — RLVR
+works here but the family/isomorphism reward adds nothing."** The iso hypothesis is not
+supported. This is now a *clean* null (unlike Phase 8, where no arm moved): with the
+substrate demonstrably trainable (every verifier arm beats base, random flat), the
+family-consistency reward still produces no gain over a plain independent correctness
+reward, at lambda 0.50 or 1.00, on both seeds. Saved: `outputs/phase9/stage3/stage3_comparisons.json`.

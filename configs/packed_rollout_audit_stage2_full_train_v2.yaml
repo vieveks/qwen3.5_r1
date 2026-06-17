@@ -1,0 +1,16 @@
+# Phase 9 Stage 2 full-scale: batched difficulty audit over the 2000-family train pool.
+model_name: Qwen/Qwen3-1.7B
+dataset_path: data/stage2_full_packed_train.jsonl
+output_path: outputs/phase9/stage2_full/audit_train_v2_adapterA.jsonl
+device: auto
+adapter_path: outputs/phase9/stage2_full/independent_phaseA/adapter_or_model
+apply_chat_template: true
+enable_thinking: false
+system_prompt: "Solve each math problem. Return only the requested XML answer block, with no reasoning or extra text."
+samples_per_prompt: 8
+batch_size: 8
+max_new_tokens: 192
+temperature: 0.7
+top_p: 1.0
+parse_complete_threshold: 0.95
+reward_std_threshold: 0.05

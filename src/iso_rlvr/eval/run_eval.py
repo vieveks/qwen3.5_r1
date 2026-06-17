@@ -33,6 +33,44 @@ def generate_one(model, tokenizer, prompt: str, cfg: dict) -> str:
     return tokenizer.decode(completion_ids, skip_special_tokens=True)
 
 
+def generate_batched(
+    model,
+    tokenizer,
+    prompts: list[str],
+    cfg: dict,
+    num_return_sequences: int = 1,
+) -> list[list[str]]:
+    """Generate ``num_return_sequences`` completions for each prompt in one batched
+    ``model.generate`` call. Returns a list aligned with ``prompts``, each element a list
+    of that prompt's completions. Requires left padding for correct decoder generation.
+    """
+    prev_side = getattr(tokenizer, "padding_side", "right")
+    tokenizer.padding_side = "left"
+    try:
+        inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
+    finally:
+        tokenizer.padding_side = prev_side
+    do_sample = float(cfg.get("temperature", 0.0)) > 0.0
+    generation_kwargs = {
+        "max_new_tokens": int(cfg["max_new_tokens"]),
+        "do_sample": do_sample,
+        "pad_token_id": tokenizer.pad_token_id,
+        "eos_token_id": tokenizer.eos_token_id,
+        "num_return_sequences": num_return_sequences,
+    }
+    if do_sample:
+        generation_kwargs["temperature"] = float(cfg.get("temperature", 1.0))
+        generation_kwargs["top_p"] = float(cfg.get("top_p", 1.0))
+    with torch.no_grad():
+        outputs = model.generate(**inputs, **generation_kwargs)
+    input_len = inputs["input_ids"].shape[1]
+    texts = tokenizer.batch_decode(outputs[:, input_len:], skip_special_tokens=True)
+    return [
+        texts[i * num_return_sequences : (i + 1) * num_return_sequences]
+        for i in range(len(prompts))
+    ]
+
+
 def run_eval(config_path: Path) -> None:
     cfg = load_yaml(config_path)
     rows = read_jsonl(cfg["dataset_path"])

@@ -1,0 +1,19 @@
+# Phase 9 Stage 2 prep: difficulty audit over the train pool (8 samples/prompt at the
+# training temperature) to feed filter_by_pass_rate. Same chat-template/thinking-off
+# contract as Stage 1.
+model_name: Qwen/Qwen3-1.7B
+dataset_path: data/stage2_packed_train1024.jsonl
+output_path: outputs/phase9/stage2/audit_train1024_qwen3_1_7b.jsonl
+device: auto
+
+apply_chat_template: true
+enable_thinking: false
+system_prompt: "Solve each math problem. Return only the requested XML answer block, with no reasoning or extra text."
+
+samples_per_prompt: 8
+max_new_tokens: 192
+temperature: 0.7
+top_p: 1.0
+
+parse_complete_threshold: 0.95
+reward_std_threshold: 0.05

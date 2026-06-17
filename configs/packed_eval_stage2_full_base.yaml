@@ -1,0 +1,12 @@
+# Phase 9 Stage 2 full-scale gate: base Qwen3-1.7B (no adapter) on 773-family heldout.
+model_name: Qwen/Qwen3-1.7B
+dataset_path: data/stage2_full_packed_heldout.jsonl
+output_path: outputs/phase9/stage2_full/eval_base.jsonl
+device: auto
+apply_chat_template: true
+enable_thinking: false
+system_prompt: "Solve each math problem. Return only the requested XML answer block, with no reasoning or extra text."
+max_new_tokens: 192
+temperature: 0.0
+top_p: 1.0
+resume: true

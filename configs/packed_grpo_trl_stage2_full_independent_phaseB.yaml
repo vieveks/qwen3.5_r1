@@ -1,0 +1,37 @@
+# Phase 9 Stage 2 full-scale, independent arm, PHASE B (steps 150-300 on refreshed v2 filter).
+model_name: Qwen/Qwen3-1.7B
+adapter_path: outputs/phase9/stage2_full/independent_phaseA/adapter_or_model
+train_dataset: data/stage2_full_filtered_train_v2.jsonl
+eval_dataset: data/stage2_full_packed_heldout.jsonl
+output_dir: outputs/phase9/stage2_full/independent_final
+device: auto
+seed: 23
+max_steps: 150
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 1
+num_generations: 8
+max_completion_length: 256
+max_new_tokens: 256
+temperature: 0.7
+top_p: 1.0
+learning_rate: 0.000005
+beta: 0.0
+loss_type: dr_grpo
+scale_rewards: group
+mask_truncated_completions: true
+bf16: true
+use_vllm: false
+apply_chat_template: true
+enable_thinking: false
+system_prompt: "Solve each math problem. Return only the requested XML answer block, with no reasoning or extra text."
+logging_steps: 10
+save_strategy: "no"
+reward_mode: verifier
+family_bonus_enabled: false
+parse_complete_threshold: 0.95
+reward_std_threshold: 0.05
+format_reward: 0.05
+missing_format_penalty: -0.10
+extra_answer_penalty: 0.10
+length_penalty_weight: 0.05
+run_final_eval: false

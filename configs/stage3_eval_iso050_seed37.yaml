@@ -1,0 +1,13 @@
+model_name: Qwen/Qwen3-1.7B
+adapter_path: outputs/phase9/stage3/iso050_seed37/adapter_or_model
+dataset_path: data/stage2_full_packed_heldout.jsonl
+output_path: outputs/phase9/stage3/eval_iso050_seed37.jsonl
+device: auto
+apply_chat_template: true
+enable_thinking: false
+system_prompt: "Solve each math problem. Return only the requested XML answer block, with no reasoning or extra text."
+max_new_tokens: 192
+temperature: 0.0
+top_p: 1.0
+batch_size: 16
+resume: true

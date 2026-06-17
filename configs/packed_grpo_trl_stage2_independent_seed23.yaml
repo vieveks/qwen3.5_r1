@@ -1,0 +1,57 @@
+# Phase 9 Stage 2: independent RLVR at scale (the prerequisite gate).
+# One arm, no family/iso reward. Qwen3-1.7B, fresh LoRA, difficulty-filtered train set.
+# No vLLM yet (deferred). Chat template on, thinking off (same contract as Stage 1).
+model_name: Qwen/Qwen3-1.7B
+# no adapter_path -> fresh LoRA
+train_dataset: data/stage2_filtered_train1024.jsonl
+eval_dataset: data/stage2_packed_heldout1024.jsonl
+output_dir: outputs/phase9/stage2/independent_seed23
+device: auto
+seed: 23
+
+max_steps: 300
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 1
+num_generations: 8
+max_completion_length: 256
+max_new_tokens: 256
+temperature: 0.7
+top_p: 1.0
+learning_rate: 0.000001
+
+# Phase 9 trl 1.x knobs
+beta: 0.0
+loss_type: dr_grpo
+scale_rewards: group
+mask_truncated_completions: true
+bf16: true
+use_vllm: false
+
+# prompt contract (must match Stage 1 + eval)
+apply_chat_template: true
+enable_thinking: false
+system_prompt: "Solve each math problem. Return only the requested XML answer block, with no reasoning or extra text."
+
+# fresh LoRA
+lora_r: 16
+lora_alpha: 32
+lora_target_modules: q_proj,k_proj,v_proj,o_proj
+
+logging_steps: 10
+save_steps: 150
+save_strategy: steps
+save_total_limit: 2
+
+# independent arm: pure correctness+format reward, no family/iso bonus
+reward_mode: verifier
+family_bonus_enabled: false
+parse_complete_threshold: 0.95
+reward_std_threshold: 0.05
+format_reward: 0.05
+missing_format_penalty: -0.10
+extra_answer_penalty: 0.10
+length_penalty_weight: 0.05
+
+# the gate eval is run separately (paired bootstrap on the full heldout); skip the
+# trainer's built-in final greedy eval to save GPU time.
+run_final_eval: false
